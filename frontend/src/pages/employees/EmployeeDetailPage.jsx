@@ -1,3 +1,8 @@
+import {
+  useEffect,
+  useState,
+} from "react";
+
 import { Link, useParams } from "react-router-dom";
 
 import {
@@ -14,7 +19,8 @@ import {
 } from "lucide-react";
 
 import PageHeader from "../../components/layout/PageHeader";
-
+import { empleadosApi } from "../../api/empleadosApi";
+import { catalogosApi } from "../../api/catalogosApi";
 import {
   ACCESS_LEVELS,
   MODULES,
@@ -22,7 +28,6 @@ import {
 
 import { currentUser } from "../../data/currentUser";
 import { mockAttendanceSummary } from "../../data/mockAttendance";
-import { mockEmployees } from "../../data/mockEmployees";
 import { getModuleAccess } from "../../utils/permissions";
 
 /**
@@ -120,19 +125,295 @@ function getIncidentClass(status) {
   return "badge neutral";
 }
 
+
+function getCatalogArrayFromApiResponse(response) {
+  if (Array.isArray(response)) {
+    return response;
+  }
+
+  if (Array.isArray(response?.value)) {
+    return response.value;
+  }
+
+  if (Array.isArray(response?.items)) {
+    return response.items;
+  }
+
+  if (Array.isArray(response?.data)) {
+    return response.data;
+  }
+
+  return [];
+}
+
+function getOrganizationInfo(unit, organizationalUnits) {
+  if (!unit) {
+    return {
+      mainArea: "Sin área principal",
+      department: "Sin departamento",
+      finalUnitName: "Sin área",
+    };
+  }
+
+  const catalogUnit =
+    organizationalUnits.find(
+      (item) => Number(item.id) === Number(unit.id),
+    ) ?? unit;
+
+  const parentUnit = organizationalUnits.find(
+    (item) =>
+      Number(item.id) ===
+      Number(catalogUnit.unidad_padre_id),
+  );
+
+  const isDepartment =
+    catalogUnit.tipo_unidad_codigo === "DEPARTAMENTO";
+
+  const isDivision =
+    catalogUnit.tipo_unidad_codigo === "DIVISION";
+
+  if (isDepartment && parentUnit) {
+    const parentIsDivision =
+      parentUnit.tipo_unidad_codigo === "DIVISION";
+
+    if (parentIsDivision) {
+      return {
+        mainArea: parentUnit.nombre,
+        department: catalogUnit.nombre,
+        finalUnitName: catalogUnit.nombre,
+      };
+    }
+
+    return {
+      mainArea: catalogUnit.nombre,
+      department: "No aplica",
+      finalUnitName: catalogUnit.nombre,
+    };
+  }
+
+  if (isDivision) {
+    return {
+      mainArea: catalogUnit.nombre,
+      department: "No aplica",
+      finalUnitName: catalogUnit.nombre,
+    };
+  }
+
+  return {
+    mainArea: catalogUnit.nombre ?? "Sin área principal",
+    department: "No aplica",
+    finalUnitName: catalogUnit.nombre ?? "Sin área",
+  };
+}
+function formatEmployeeStatus(status) {
+  const normalizedStatus = String(status ?? "")
+    .trim()
+    .toUpperCase();
+
+  if (normalizedStatus === "ACTIVO") return "Activo";
+  if (normalizedStatus === "INACTIVO") return "Inactivo";
+  if (normalizedStatus === "BAJA") return "Inactivo";
+
+  return status || "Sin estatus";
+}
+
+function mapEmployeeDetailFromApi(
+  apiResponse,
+  organizationalUnits = [],
+) {
+  const employeeData =
+    apiResponse?.empleado ??
+    apiResponse?.item ??
+    apiResponse?.data ??
+    apiResponse;
+
+  const unidadOrganizacional =
+    apiResponse?.unidad_organizacional ??
+    employeeData?.unidad_organizacional ??
+    null;
+
+  const puesto =
+    apiResponse?.puesto ??
+    employeeData?.puesto ??
+    null;
+
+  const supervisor =
+    apiResponse?.supervisor ??
+    employeeData?.supervisor ??
+    null;
+
+  const horarioActual =
+    apiResponse?.horario_actual ??
+    employeeData?.horario_actual ??
+    null;
+
+  const dispositivo =
+    apiResponse?.dispositivo ??
+    employeeData?.dispositivo ??
+    null;
+
+  const organizationInfo = getOrganizationInfo(
+    unidadOrganizacional,
+    organizationalUnits,
+  );
+
+  const fullName =
+    employeeData?.nombre_completo ??
+    [
+      employeeData?.nombres,
+      employeeData?.apellido_paterno,
+      employeeData?.apellido_materno,
+    ]
+      .filter(Boolean)
+      .join(" ") ??
+    "Empleado sin nombre";
+
+  return {
+    id: employeeData?.id ?? null,
+
+    employeeCode:
+      employeeData?.codigo_empleado ?? "",
+
+    fullName,
+
+    email:
+      employeeData?.correo ?? "",
+
+    rfc:
+      employeeData?.rfc ?? "Sin RFC",
+
+    mainArea:
+      organizationInfo.mainArea,
+
+    department:
+      organizationInfo.department,
+
+    finalUnitName:
+      organizationInfo.finalUnitName,
+
+    position:
+      puesto?.nombre ?? "Sin puesto",
+
+    supervisorId:
+      supervisor?.id ?? null,
+
+    supervisor:
+      supervisor?.nombre_completo ??
+      "Sin supervisor asignado",
+
+    scheduleId:
+      horarioActual?.horario_id ?? null,
+
+    schedule:
+      horarioActual?.nombre ?? "Sin horario",
+
+    scheduleTurn:
+      horarioActual?.tipo_turno_nombre ?? "",
+
+    scheduleStartDate:
+      horarioActual?.fecha_inicio ?? null,
+
+    zkUserId:
+      dispositivo?.zk_user_id ?? "Sin usuario ZK",
+
+    status: formatEmployeeStatus(
+      employeeData?.estatus,
+    ),
+
+    attendanceStatus: "Sin evaluar",
+
+    lastPunch: "Sin registros",
+  };
+}
 function EmployeeDetailPage() {
   const { employeeId } = useParams();
 
-  const numericEmployeeId = Number(employeeId);
+  const [employee, setEmployee] = useState(null);
+  const [isLoadingEmployee, setIsLoadingEmployee] =
+    useState(false);  
+  const [employeeError, setEmployeeError] = useState("");
 
-  const employee = mockEmployees.find(
-    (item) => item.id === numericEmployeeId,
-  );
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadEmployee() {
+      try {
+        setIsLoadingEmployee(true);
+        setEmployeeError("");
+
+        const [
+          employeeProfile,
+          organizationalUnitsResponse,
+        ] = await Promise.all([
+          empleadosApi.obtenerPerfil(employeeId),
+          catalogosApi.listarUnidadesOrganizacionales(),
+        ]);
+
+        if (!isMounted) return;
+
+        const organizationalUnits =
+          getCatalogArrayFromApiResponse(
+            organizationalUnitsResponse,
+          );
+
+        setEmployee(
+          mapEmployeeDetailFromApi(
+            employeeProfile,
+            organizationalUnits,
+          ),
+        );
+      } catch (error) {
+        if (!isMounted) return;
+
+        setEmployee(null);
+        setEmployeeError(
+          error.message ||
+            "No fue posible cargar el empleado desde el backend.",
+        );
+      } finally {
+        if (isMounted) {
+          setIsLoadingEmployee(false);
+        }
+      }
+    }
+
+    if (employeeId) {
+      loadEmployee();
+    }
+
+    return () => {
+      isMounted = false;
+    };
+  }, [employeeId]);
 
   const employeeAccess = getModuleAccess(
     currentUser.role,
     MODULES.EMPLEADOS,
   );
+
+  if (isLoadingEmployee) {
+  return (
+    <div className="page-stack">
+      <PageHeader
+        title="Cargando empleado"
+        description="Consultando la información del empleado en el backend."
+      />
+
+      <section className="panel-card">
+        <div className="empty-state">
+          <UserRound size={48} />
+
+          <h3>Cargando información</h3>
+
+          <p>
+            Espera un momento mientras se recupera el
+            expediente del empleado.
+          </p>
+        </div>
+      </section>
+    </div>
+  );
+}
 
   if (!employee) {
     return (
@@ -149,8 +430,8 @@ function EmployeeDetailPage() {
             <h3>Empleado no encontrado</h3>
 
             <p>
-              Verifica que el identificador del empleado sea
-              correcto.
+              {employeeError ||
+                "Verifica que el identificador del empleado sea correcto."}
             </p>
 
             <Link
@@ -277,7 +558,7 @@ function EmployeeDetailPage() {
     <div className="page-stack">
       <PageHeader
         title={employee.fullName}
-        description={`${employee.employeeCode} · ${employee.position}`}
+        description={`${employee.employeeCode} · ${employee.position} · ${employee.mainArea}`}
       >
         <div className="header-actions">
           <Link
@@ -290,7 +571,7 @@ function EmployeeDetailPage() {
           {canManageEmployee && (
             <Link
               className="secondary-button link-button"
-              to={`/employees/${employee.id}/edit`}
+              to={`/employees/${employee.employeeCode}/edit`}
             >
               <Pencil size={17} />
               Editar empleado
@@ -368,7 +649,12 @@ function EmployeeDetailPage() {
             </div>
 
             <div>
-              <span>Departamento</span>
+              <span>Área principal</span>
+              <strong>{employee.mainArea}</strong>
+            </div>
+
+            <div>
+              <span>Departamento específico</span>
               <strong>{employee.department}</strong>
             </div>
 
@@ -384,7 +670,18 @@ function EmployeeDetailPage() {
 
             <div>
               <span>Horario asignado</span>
-              <strong>{employee.schedule}</strong>
+              <strong>
+                {employee.scheduleTurn
+                  ? `${employee.schedule} · ${employee.scheduleTurn}`
+                  : employee.schedule}
+              </strong>
+            </div>
+
+            <div>
+              <span>Inicio de horario</span>
+              <strong>
+                {employee.scheduleStartDate ?? "Sin fecha"}
+              </strong>
             </div>
 
             <div>

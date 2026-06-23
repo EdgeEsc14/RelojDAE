@@ -21,7 +21,9 @@ import {
 } from "../../constants/permissions";
 
 import { currentUser } from "../../data/currentUser";
-import { mockEmployees } from "../../data/mockEmployees";
+/* Esta cosa solamente era de prueba 
+import { mockEmployees } from "../../data/mockEmployees";*/
+import { empleadosApi } from "../../api/empleadosApi";
 import { getModuleAccess } from "../../utils/permissions";
 
 function getStatusClass(status) {
@@ -76,7 +78,128 @@ function getVisiblePageNumbers(currentPage, totalPages) {
   );
 }
 
+function formatEmployeeStatus(status) {
+  const normalizedStatus = normalizeText(status);
+
+  if (normalizedStatus === "activo") return "Activo";
+  if (normalizedStatus === "inactivo") return "Inactivo";
+  if (normalizedStatus === "baja") return "Inactivo";
+
+  return status || "Sin estatus";
+}
+
+function getEmployeesArrayFromApiResponse(response) {
+  if (Array.isArray(response)) {
+    return response;
+  }
+
+  if (Array.isArray(response?.items)) {
+    return response.items;
+  }
+
+  if (Array.isArray(response?.data)) {
+    return response.data;
+  }
+
+  if (Array.isArray(response?.empleados)) {
+    return response.empleados;
+  }
+
+  if (Array.isArray(response?.results)) {
+    return response.results;
+  }
+
+  return [];
+}
+
+
+/* Funcion de mapeo para conectar la API
+protege el diseño aunque el backend todavía no regrese todos los campos */
+function mapEmployeeFromApi(employee) {
+  return {
+    id: employee.id ?? employee.empleado_id ?? employee.codigo_empleado,
+
+    employeeCode:
+      employee.codigo_empleado ??
+      employee.employeeCode ??
+      "Sin código",
+
+    fullName:
+      employee.nombre_completo ??
+      employee.fullName ??
+      [
+        employee.nombres,
+        employee.apellido_paterno,
+        employee.apellido_materno,
+      ]
+        .filter(Boolean)
+        .join(" ") ??
+      "Sin nombre",
+
+    email:
+      employee.correo ??
+      employee.email ??
+      "",
+
+    rfc:
+      employee.rfc ??
+      "",
+
+    departmentId:
+      employee.unidad_organizacional_id ??
+      employee.departamento_id ??
+      employee.departmentId ??
+      null,
+
+    department:
+      employee.unidad_organizacional_nombre ??
+      employee.departamento_nombre ??
+      employee.department ??
+      "Sin área",
+
+    position:
+      employee.puesto_nombre ??
+      employee.position ??
+      "Sin puesto",
+
+    supervisor:
+      employee.supervisor_nombre ??
+      employee.supervisor ??
+      "Sin supervisor",
+
+    zkUserId:
+      employee.zk_user_id ??
+      employee.zkUserId ??
+      "Sin usuario ZK",
+
+    schedule:
+      employee.horario_nombre ??
+      employee.schedule ??
+      "Sin horario",
+
+    lastCheck:
+      employee.ultima_checada ??
+      employee.lastCheck ??
+      "Sin checada",
+
+    attendanceStatus:
+      employee.estado_asistencia ??
+      employee.attendanceStatus ??
+      "Sin evaluar",
+
+    status: formatEmployeeStatus(
+      employee.estatus ?? employee.status,
+    ),
+  };
+}
+
+
 function EmployeesPage() {
+  const [employees, setEmployees] = useState([]);
+  const [isLoadingEmployees, setIsLoadingEmployees] =
+    useState(false);
+  const [employeesError, setEmployeesError] = useState("");
+
   const [searchTerm, setSearchTerm] = useState("");
 
   const [showFilters, setShowFilters] = useState(false);
@@ -98,13 +221,55 @@ function EmployeesPage() {
     currentUser.role,
     MODULES.EMPLEADOS,
   );
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadEmployees() {
+      try {
+        setIsLoadingEmployees(true);
+        setEmployeesError("");
+
+        const data = await empleadosApi.listar();
+        /*Esta cosa es temporal solo para saber como esta
+        console.log("Respuesta empleados API:", data);*/
+        
+        if (!isMounted) return;
+
+        const employeesFromApi =
+          getEmployeesArrayFromApiResponse(data);
+
+        const mappedEmployees =
+          employeesFromApi.map(mapEmployeeFromApi);
+
+        setEmployees(mappedEmployees);
+      } catch (error) {
+        if (!isMounted) return;
+
+        setEmployees([]);
+        setEmployeesError(
+          error.message ||
+            "No fue posible cargar los empleados desde el backend.",
+        );
+      } finally {
+        if (isMounted) {
+          setIsLoadingEmployees(false);
+        }
+      }
+    }
+
+    loadEmployees();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   /*
    * Primer nivel:
    * limita los empleados según el alcance del rol.
    */
   const scopedEmployees = useMemo(() => {
-    return mockEmployees.filter((employee) => {
+    return employees.filter((employee) => {
       if (
         employeeAccess === ACCESS_LEVELS.TOTAL ||
         employeeAccess === ACCESS_LEVELS.LECTURA
@@ -128,7 +293,7 @@ function EmployeesPage() {
 
       return false;
     });
-  }, [employeeAccess]);
+  }, [employeeAccess, employees]);
 
   /*
    * Opciones disponibles para el filtro de departamentos.
@@ -497,6 +662,26 @@ function EmployeesPage() {
           </div>
         )}
 
+        {employeesError && (
+          <div className="empty-state">
+            <h3>Error al cargar empleados</h3>
+
+            <p>{employeesError}</p>
+          </div>
+        )}
+
+        {isLoadingEmployees && (
+          <div className="empty-state">
+            <h3>Cargando empleados</h3>
+
+            <p>
+              Consultando la información desde el backend de
+              RelojChecador.
+            </p>
+          </div>
+        )}
+
+
         {(searchTerm || hasActiveFilters) && (
         <div className="filter-results-summary">
           <span>
@@ -517,7 +702,7 @@ function EmployeesPage() {
         </div>
       )}
 
-        {visibleEmployees.length === 0 ? (
+        {!isLoadingEmployees && visibleEmployees.length === 0 ? (
           <div className="empty-state">
             <h3>No se encontraron empleados</h3>
 
@@ -611,7 +796,7 @@ function EmployeesPage() {
                     <td>
                       <Link
                         className="table-action"
-                        to={`/employees/${employee.id}`}
+                        to={`/employees/${employee.employeeCode}`}
                       >
                         <Eye size={16} />
                         Ver

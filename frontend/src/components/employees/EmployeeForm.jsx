@@ -3,7 +3,7 @@ import {
   useMemo,
   useState,
 } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 
 import {
   AlertCircle,
@@ -16,6 +16,9 @@ import {
 } from "lucide-react";
 
 import PageHeader from "../layout/PageHeader";
+import { empleadosApi } from "../../api/empleadosApi";
+
+import { catalogosApi } from "../../api/catalogosApi";
 import {
   getScheduleDescription,
   mockDepartments,
@@ -87,6 +90,149 @@ function normalizeName(value) {
     .replace(/\s+/g, " ")
     .toUpperCase();
 }
+
+
+function getTodayDateInputValue() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function toBackendEmployeeStatus(status) {
+  if (status === "Activo") return "ACTIVO";
+  if (status === "Inactivo") return "INACTIVO";
+
+  return "ACTIVO";
+}
+
+function buildEmployeeCreatePayload(
+  form,
+  automaticEmployeeCode,
+) {
+  return {
+    codigo_empleado: automaticEmployeeCode
+      ? null
+      : form.employeeCode.trim().toUpperCase(),
+
+    generar_codigo: automaticEmployeeCode,
+
+    nombres: normalizeName(form.firstNames),
+
+    apellido_paterno: normalizeName(
+      form.paternalSurname,
+    ),
+
+    apellido_materno: form.maternalSurname.trim()
+      ? normalizeName(form.maternalSurname)
+      : null,
+
+    rfc: form.rfc.trim()
+      ? form.rfc.trim().toUpperCase()
+      : null,
+
+    correo: form.email.trim().toLowerCase(),
+
+    unidad_organizacional_id: form.departmentId
+      ? Number(form.departmentId)
+      : Number(form.mainUnitId),
+
+    /*
+     * Temporalmente usamos el único puesto real existente
+     * en catálogo:
+     *
+     * id: 2
+     * AUXILIAR_ADMINISTRATIVO
+     *
+     * En el siguiente paso cambiamos el campo "position"
+     * por un select real de puestos.
+     */
+    puesto_id: Number(form.positionId),
+
+    supervisor_id:
+      form.supervisorId === "none"
+        ? null
+        : Number(form.supervisorId),
+
+    fecha_ingreso: form.fechaIngreso,
+
+    estatus: toBackendEmployeeStatus(form.status),
+  };
+}
+function buildEmployeeSchedulePayload(form) {
+  return {
+    horario_id: Number(form.scheduleId),
+    fecha_inicio: form.fechaIngreso,
+    fecha_fin: null,
+    motivo: "Asignación inicial desde alta de empleado",
+    cerrar_asignaciones_activas: true,
+  };
+}
+function getCatalogArrayFromApiResponse(response) {
+  if (Array.isArray(response)) {
+    return response;
+  }
+
+  if (Array.isArray(response?.value)) {
+    return response.value;
+  }
+
+  if (Array.isArray(response?.items)) {
+    return response.items;
+  }
+
+  if (Array.isArray(response?.data)) {
+    return response.data;
+  }
+
+  return [];
+}
+
+function getScheduleOptionLabel(schedule) {
+  if (schedule.nombre && schedule.tipo_turno_nombre) {
+    return `${schedule.nombre} · ${schedule.tipo_turno_nombre}`;
+  }
+
+  if (schedule.nombre) {
+    return schedule.nombre;
+  }
+
+  if (schedule.name) {
+    return `${schedule.name} · ${getScheduleDescription(schedule)}`;
+  }
+
+  return "Horario sin nombre";
+}
+
+
+function mapSavedEmployeeFromApi(apiEmployee, form) {
+  const firstNames = normalizeName(form.firstNames);
+  const paternalSurname = normalizeName(
+    form.paternalSurname,
+  );
+  const maternalSurname = form.maternalSurname.trim()
+    ? normalizeName(form.maternalSurname)
+    : "";
+
+  const fallbackFullName = [
+    firstNames,
+    paternalSurname,
+    maternalSurname,
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  return {
+    id: apiEmployee?.id,
+    employeeCode:
+      apiEmployee?.codigo_empleado ??
+      form.employeeCode.trim().toUpperCase(),
+    fullName:
+      apiEmployee?.nombre_completo ?? fallbackFullName,
+    email:
+      apiEmployee?.correo ??
+      form.email.trim().toLowerCase(),
+  };
+}
+
+
 function getEmployeeNameParts(employee) {
   if (!employee) {
     return {
@@ -152,6 +298,8 @@ function validateEmployee(form, editingEmployeeId = null) {
   const firstNames = form.firstNames.trim();
   const paternalSurname = form.paternalSurname.trim();
   const rfc = form.rfc.trim().toUpperCase();
+  const email = form.email.trim().toLowerCase();
+  const fechaIngreso = form.fechaIngreso;
 
   if (!employeeCode) {
     errors.employeeCode =
@@ -200,14 +348,14 @@ function validateEmployee(form, editingEmployeeId = null) {
       "El apellido paterno es obligatorio.";
   }
 
-  if (!rfc) {
-    errors.rfc = "El RFC es obligatorio.";
-  } else if (
+  if (
+    rfc &&
     !/^[A-ZÑ&]{4}\d{6}[A-Z0-9]{3}$/.test(rfc)
   ) {
     errors.rfc =
       "El RFC debe tener 13 caracteres y un formato válido.";
   } else if (
+    rfc &&
     mockEmployees.some(
       (employee) =>
         employee.id !== editingEmployeeId &&
@@ -217,15 +365,46 @@ function validateEmployee(form, editingEmployeeId = null) {
     errors.rfc =
       "Ya existe un empleado registrado con este RFC.";
   }
-
-  if (!form.departmentId) {
-    errors.departmentId =
-      "Selecciona un departamento.";
+  if (!email) {
+    errors.email =
+      "El correo institucional es obligatorio.";
+  } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    errors.email =
+      "Ingresa un correo institucional válido.";
   }
 
-  if (!form.position.trim()) {
-    errors.position =
-      "El puesto es obligatorio.";
+  if (!fechaIngreso) {
+    errors.fechaIngreso =
+      "La fecha de ingreso es obligatoria.";
+  }
+
+  if (!form.mainUnitId) {
+    errors.mainUnitId =
+      "Selecciona un área principal.";
+  }
+
+  const selectedMainUnitId = Number(form.mainUnitId);
+
+  const selectedMainUnitHasChildren =
+    Array.isArray(form.availableDepartments) &&
+    form.availableDepartments.some(
+      (department) =>
+        Number(department.unidad_padre_id) ===
+        selectedMainUnitId,
+    );
+
+  if (
+    form.mainUnitId &&
+    selectedMainUnitHasChildren &&
+    !form.departmentId
+  ) {
+    errors.departmentId =
+      "Selecciona un departamento específico.";
+  }
+
+  if (!form.positionId) {
+    errors.positionId =
+      "Selecciona un puesto.";
   }
 
   if (!form.supervisorId) {
@@ -245,6 +424,7 @@ function EmployeeForm({
   mode = "create",
   initialEmployee = null,
 }) {
+  const navigate = useNavigate();
   const isEditMode = mode === "edit";
 
   const suggestedEmployeeCode = useMemo(
@@ -279,11 +459,31 @@ function EmployeeForm({
 
         rfc: initialEmployee.rfc ?? "",
 
+        email:
+          initialEmployee.email ??
+          initialEmployee.correo ??
+          "",
+
+        fechaIngreso:
+          initialEmployee.fechaIngreso ??
+          initialEmployee.fecha_ingreso ??
+          getTodayDateInputValue(),
+
         status:
           initialEmployee.status ?? "Activo",
 
+        mainUnitId:
+          initialEmployee.mainUnitId
+            ? String(initialEmployee.mainUnitId)
+            : "",
+
         departmentId:
           String(initialEmployee.departmentId ?? ""),
+
+        positionId:
+          initialEmployee.positionId
+            ? String(initialEmployee.positionId)
+            : "",
 
         position:
           initialEmployee.position ?? "",
@@ -307,8 +507,12 @@ function EmployeeForm({
       paternalSurname: "",
       maternalSurname: "",
       rfc: "",
+      email: "",
+      fechaIngreso: getTodayDateInputValue(),
       status: "Activo",
+      mainUnitId: "",
       departmentId: "",
+      positionId: "",
       position: "",
       supervisorId: "",
       scheduleId: "",
@@ -328,13 +532,13 @@ function EmployeeForm({
     automaticEmployeeCode,
     setAutomaticEmployeeCode,
   ] = useState(!isEditMode);
-  useEffect(() => {
-    setForm(initialForm);
-    setErrors({});
-    setSavedEmployee(null);
-    setAutomaticEmployeeCode(!isEditMode);
-  }, [initialForm, isEditMode]);
-  const [schedules, setSchedules] = useState(mockSchedules);
+
+  const [schedules, setSchedules] = useState([]);
+  const [departments, setDepartments] = useState([]);
+  const [positions, setPositions] = useState([]);
+  const [isLoadingCatalogs, setIsLoadingCatalogs] =
+    useState(false);
+  const [catalogsError, setCatalogsError] = useState("");
 
   const [showScheduleModal, setShowScheduleModal] =
     useState(false);
@@ -345,22 +549,116 @@ function EmployeeForm({
 
   const [scheduleErrors, setScheduleErrors] = useState({});
 
+  useEffect(() => {
+    setForm(initialForm);
+    setErrors({});
+    setSavedEmployee(null);
+    setAutomaticEmployeeCode(!isEditMode);
+  }, [initialForm, isEditMode]);
 
-  
+  useEffect(() => {
+    let isMounted = true;
 
-  const activeDepartments = useMemo(
+    async function loadCatalogs() {
+      try {
+        setIsLoadingCatalogs(true);
+        setCatalogsError("");
+
+        const [
+          departmentsResponse,
+          positionsResponse,
+          schedulesResponse,
+        ] = await Promise.all([
+          catalogosApi.listarUnidadesOrganizacionales(),
+          catalogosApi.listarPuestos(),
+          catalogosApi.listarHorarios(),
+        ]);
+
+        if (!isMounted) return;
+
+        const departmentsFromApi =
+          getCatalogArrayFromApiResponse(
+            departmentsResponse,
+          );
+
+        const positionsFromApi =
+          getCatalogArrayFromApiResponse(
+            positionsResponse,
+          );
+        const schedulesFromApi =
+          getCatalogArrayFromApiResponse(
+            schedulesResponse,
+          );
+        /* ESto es temporal pa ver uqe onda */
+        console.log("Horarios desde API:", schedulesFromApi);
+
+        setDepartments(
+          departmentsFromApi.filter(
+            (department) => department.activo,
+          ),
+        );
+
+        setPositions(
+          positionsFromApi.filter(
+            (position) => position.activo,
+          ),
+        );
+        setSchedules(
+          schedulesFromApi.filter(
+            (schedule) => schedule.activo,
+          ),
+        );
+      } catch (error) {
+        if (!isMounted) return;
+
+        setCatalogsError(
+          error.message ||
+            "No fue posible cargar los catálogos desde el backend.",
+        );
+      } finally {
+        if (isMounted) {
+          setIsLoadingCatalogs(false);
+        }
+      }
+    }
+
+    loadCatalogs();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  const MAIN_ASSIGNABLE_UNIT_CODES = new Set([
+    "DIV_ADMISION_CONTROL_ESCOLAR",
+    "DIV_REGISTRO_CERTIFICACION_ESTUDIOS",
+    "DEP_SERVICIOS_ADMINISTRATIVOS",
+  ]);
+
+
+  const mainUnits = useMemo(
     () =>
-      mockDepartments.filter(
-        (department) => department.isActive,
+      departments.filter((department) =>
+        MAIN_ASSIGNABLE_UNIT_CODES.has(department.codigo),
       ),
-    [],
+    [departments],
+  );
+  const selectedMainUnitId = Number(form.mainUnitId);
+
+  const childDepartments = useMemo(
+    () =>
+      departments.filter(
+        (department) =>
+          Number(department.unidad_padre_id) ===
+          selectedMainUnitId,
+      ),
+    [departments, selectedMainUnitId],
   );
 
+  const selectedUnitHasChildren =
+    childDepartments.length > 0;
   const activeSchedules = useMemo(
-    () =>
-      schedules.filter(
-        (schedule) => schedule.isActive,
-      ),
+    () => schedules,
     [schedules],
   );
 
@@ -369,7 +667,9 @@ function EmployeeForm({
     [],
   );
 
-  const selectedDepartmentId = Number(form.departmentId);
+  const selectedDepartmentId = Number(
+    form.departmentId || form.mainUnitId,
+  );
 
   const sameDepartmentSupervisors =
     supervisorCandidates.filter(
@@ -398,6 +698,11 @@ function EmployeeForm({
         [name]: nextValue,
       };
 
+      if (name === "mainUnitId") {
+        nextForm.departmentId = "";
+        nextForm.supervisorId = "";
+      }
+
       if (name === "departmentId") {
         nextForm.supervisorId = "";
       }
@@ -408,8 +713,18 @@ function EmployeeForm({
     setErrors((currentErrors) => ({
       ...currentErrors,
       [name]: undefined,
+      ...(name === "mainUnitId"
+        ? {
+            mainUnitId: undefined,
+            departmentId: undefined,
+            supervisorId: undefined,
+          }
+        : {}),
       ...(name === "departmentId"
-        ? { supervisorId: undefined }
+        ? {
+            departmentId: undefined,
+            supervisorId: undefined,
+          }
         : {}),
     }));
 
@@ -606,11 +921,14 @@ function EmployeeForm({
 
     closeScheduleModal();
   }
-  function handleSubmit(event) {
+  async function handleSubmit(event) {
     event.preventDefault();
 
     const validationErrors = validateEmployee(
-      form,
+      {
+        ...form,
+        availableDepartments: departments,
+      },
       isEditMode ? initialEmployee?.id : null,
     );
 
@@ -629,99 +947,51 @@ function EmployeeForm({
     }
 
     setIsSubmitting(true);
-
-    const department = mockDepartments.find(
-      (item) =>
-        item.id === Number(form.departmentId),
-    );
-
-    const schedule = schedules.find(
-      (item) =>
-        item.id === Number(form.scheduleId),
-    );
-
-    const supervisor =
-      form.supervisorId === "none"
-        ? null
-        : mockEmployees.find(
-            (item) =>
-              item.id === Number(form.supervisorId),
-          );
-
-    const firstNames = normalizeName(form.firstNames);
-    const paternalSurname = normalizeName(
-      form.paternalSurname,
-    );
-
-    const maternalSurname = normalizeName(
-      form.maternalSurname,
-    );
-
-    const fullName = [
-      firstNames,
-      paternalSurname,
-      maternalSurname,
-    ]
-      .filter(Boolean)
-      .join(" ");
-
-    const employeeId = isEditMode
-      ? initialEmployee.id
-      : Math.max(
-          0,
-          ...mockEmployees.map((employee) => employee.id),
-        ) + 1;
-
-    const employeePayload  = {
-      id: employeeId,
-
-      employeeCode: form.employeeCode
-        .trim()
-        .toUpperCase(),
-
-      zkUserId: form.zkUserId.trim(),
-
-      firstNames,
-      paternalSurname,
-      maternalSurname,
-      fullName,
-
-      rfc: form.rfc.trim().toUpperCase(),
-
-      departmentId: Number(form.departmentId),
-      department: department?.name ?? "",
-
-      position: form.position.trim(),
-
-      supervisorId: supervisor?.id ?? null,
-      supervisor:
-        supervisor?.fullName ??
-        "Sin supervisor asignado",
-
-      scheduleId: Number(form.scheduleId),
-      schedule:
-        getScheduleDescription(schedule),
-
-      status: form.status,
-
-      lastPunch: "Sin registros",
-
-      attendanceStatus:
-        form.status === "Activo"
-          ? "Sin registro"
-          : "Baja",
-    };
-
-    console.log(
-      isEditMode
-        ? "Empleado actualizado:"
-        : "Empleado creado:",
-      employeePayload,
-    );
-
-    setSavedEmployee(employeePayload);
     setErrors({});
-    setIsSubmitting(false);
+    setSavedEmployee(null);
+
+    try {
+      if (isEditMode) {
+        throw new Error(
+          "AUNNNN TENGO PENDIENTE ESTOOOOOOO",
+        );
+      }
+
+      const createPayload = buildEmployeeCreatePayload(
+        form,
+        automaticEmployeeCode,
+      );
+
+      const createdEmployee =
+        await empleadosApi.crear(createPayload);
+
+      const savedEmployeeFromApi =
+        mapSavedEmployeeFromApi(createdEmployee, form);
+
+      const schedulePayload =
+        buildEmployeeSchedulePayload(form);
+
+      await empleadosApi.asignarHorario(
+        savedEmployeeFromApi.employeeCode,
+        schedulePayload,
+      );
+
+      setSavedEmployee(savedEmployeeFromApi);
+
+      setTimeout(() => {
+        navigate("/employees");
+      }, 900);
+    } catch (error) {
+      setErrors({
+        submit:
+          error.message ||
+          "No fue posible guardar el empleado en el backend.",
+      });
+
+      setSavedEmployee(null);
+    } finally {
+      setIsSubmitting(false);
+    }
   }
 
   function handleReset() {
@@ -767,7 +1037,7 @@ function EmployeeForm({
             <strong>
               {isEditMode
                 ? "Empleado actualizado correctamente"
-                : "Empleado validado correctamente"}
+                : "Empleado creado correctamente"}
             </strong>
 
             <p>
@@ -775,6 +1045,23 @@ function EmployeeForm({
                 ? `${savedEmployee.fullName} backend.`
                 : `${savedEmployee.fullName} backend.`}
             </p>
+          </div>
+        </section>
+      )}
+
+      {catalogsError && (
+        <section
+          className="form-alert danger"
+          role="alert"
+        >
+          <AlertCircle size={22} />
+
+          <div>
+            <strong>
+              Error al cargar catálogos
+            </strong>
+
+            <p>{catalogsError}</p>
           </div>
         </section>
       )}
@@ -792,8 +1079,8 @@ function EmployeeForm({
             </strong>
 
             <p>
-              Existen campos obligatorios o valores
-              duplicados que deben corregirse.
+              {errors.submit ??
+                "Hay campos obligatorios, formatos incorrectos o duplicados que deben corregirse."}
             </p>
           </div>
         </section>
@@ -817,63 +1104,6 @@ function EmployeeForm({
           </div>
 
           <div className="form-grid">
-            <div className="form-field">
-              <label htmlFor="employeeCode">
-                Código de empleado
-              </label>
-
-              <div className="input-action-row">
-                <input
-                  id="employeeCode"
-                  className={
-                    errors.employeeCode
-                      ? "input-error"
-                      : ""
-                  }
-                  type="text"
-                  name="employeeCode"
-                  value={form.employeeCode}
-                  onChange={handleChange}
-                  readOnly={automaticEmployeeCode}
-                  placeholder="EMP-0008"
-                  autoComplete="off"
-                />
-
-                {!isEditMode && (
-                  <button
-                    className="secondary-button compact-button"
-                    type="button"
-                    onClick={suggestEmployeeCode}
-                    title="Restablecer código sugerido"
-                  >
-                    <RefreshCcw size={16} />
-                  </button>
-                )}
-              </div>
-
-              {!isEditMode && (
-                <label
-                  className="checkbox-control"
-                  htmlFor="automaticEmployeeCode"
-                >
-                  <input
-                    id="automaticEmployeeCode"
-                    type="checkbox"
-                    checked={automaticEmployeeCode}
-                    onChange={handleAutomaticCodeChange}
-                  />
-
-                  Generar automáticamente
-                </label>
-              )}
-
-              {errors.employeeCode && (
-                <span className="field-error">
-                  {errors.employeeCode}
-                </span>
-              )}
-            </div>
-
             <div className="form-field">
               <label htmlFor="zkUserId">
                 Usuario Reloj
@@ -1015,7 +1245,53 @@ function EmployeeForm({
                 </span>
               )}
             </div>
+            <div className="form-field">
+              <label htmlFor="email">
+                Correo institucional
+              </label>
 
+              <input
+                id="email"
+                className={
+                  errors.email ? "input-error" : ""
+                }
+                type="email"
+                name="email"
+                value={form.email}
+                onChange={handleChange}
+                placeholder="empleado@dae.local"
+                autoComplete="email"
+              />
+
+              {errors.email && (
+                <span className="field-error">
+                  {errors.email}
+                </span>
+              )}
+            </div>
+
+            <div className="form-field">
+              <label htmlFor="fechaIngreso">
+                Fecha de ingreso
+              </label>
+
+              <input
+                id="fechaIngreso"
+                className={
+                  errors.fechaIngreso ? "input-error" : ""
+                }
+                type="date"
+                name="fechaIngreso"
+                value={form.fechaIngreso}
+                onChange={handleChange}
+              />
+
+              {errors.fechaIngreso && (
+                <span className="field-error">
+                  {errors.fechaIngreso}
+                </span>
+              )}
+            </div>
             <div className="form-field">
               <label htmlFor="status">
                 Estatus
@@ -1045,15 +1321,55 @@ function EmployeeForm({
               <h3>Organización</h3>
 
               <p>
-                Departamento, puesto, supervisor y horario.
+                Division, puesto, supervisor y horario.
               </p>
             </div>
           </div>
 
           <div className="form-grid">
+                        <div className="form-field">
+              <label htmlFor="mainUnitId">
+                Área principal
+              </label>
+
+              <select
+                id="mainUnitId"
+                className={
+                  errors.mainUnitId
+                    ? "input-error"
+                    : ""
+                }
+                name="mainUnitId"
+                value={form.mainUnitId}
+                onChange={handleChange}
+                disabled={isLoadingCatalogs}
+              >
+                <option value="">
+                  {isLoadingCatalogs
+                    ? "Cargando horarios..."
+                    : "Selecciona horario"}
+                </option>
+
+                {mainUnits.map((unit) => (
+                  <option
+                    key={unit.id}
+                    value={unit.id}
+                  >
+                    {unit.nombre}
+                  </option>
+                ))}
+              </select>
+
+              {errors.mainUnitId && (
+                <span className="field-error">
+                  {errors.mainUnitId}
+                </span>
+              )}
+            </div>
+
             <div className="form-field">
               <label htmlFor="departmentId">
-                Departamento
+                Departamento específico
               </label>
 
               <select
@@ -1066,20 +1382,35 @@ function EmployeeForm({
                 name="departmentId"
                 value={form.departmentId}
                 onChange={handleChange}
+                disabled={
+                  !form.mainUnitId ||
+                  !selectedUnitHasChildren ||
+                  isLoadingCatalogs
+                }
               >
                 <option value="">
-                  Selecciona departamento
+                  {!form.mainUnitId
+                    ? "Primero selecciona área principal"
+                    : selectedUnitHasChildren
+                      ? "Selecciona departamento"
+                      : "No aplica para esta área"}
                 </option>
 
-                {activeDepartments.map((department) => (
+                {childDepartments.map((department) => (
                   <option
                     key={department.id}
                     value={department.id}
                   >
-                    {department.name}
+                    {department.nombre}
                   </option>
                 ))}
               </select>
+
+              {!selectedUnitHasChildren && form.mainUnitId && (
+                <span className="field-help">
+                  Esta área se asigna directamente al empleado.
+                </span>
+              )}
 
               {errors.departmentId && (
                 <span className="field-error">
@@ -1089,27 +1420,41 @@ function EmployeeForm({
             </div>
 
             <div className="form-field">
-              <label htmlFor="position">
+              <label htmlFor="positionId">
                 Puesto
               </label>
 
-              <input
-                id="position"
+              <select
+                id="positionId"
                 className={
-                  errors.position
+                  errors.positionId
                     ? "input-error"
                     : ""
                 }
-                type="text"
-                name="position"
-                value={form.position}
+                name="positionId"
+                value={form.positionId}
                 onChange={handleChange}
-                placeholder="Puesto del empleado"
-              />
+                disabled={isLoadingCatalogs}
+              >
+                <option value="">
+                  {isLoadingCatalogs
+                    ? "Cargando puestos..."
+                    : "Selecciona puesto"}
+                </option>
 
-              {errors.position && (
+                {positions.map((position) => (
+                  <option
+                    key={position.id}
+                    value={position.id}
+                  >
+                    {position.nombre}
+                  </option>
+                ))}
+              </select>
+
+              {errors.positionId && (
                 <span className="field-error">
-                  {errors.position}
+                  {errors.positionId}
                 </span>
               )}
             </div>
@@ -1134,7 +1479,7 @@ function EmployeeForm({
                 <option value="">
                   {form.departmentId
                     ? "Selecciona supervisor"
-                    : "Primero selecciona departamento"}
+                    : "Primero selecciona división"}
                 </option>
 
                 <option value="none">
@@ -1197,9 +1542,12 @@ function EmployeeForm({
                   name="scheduleId"
                   value={form.scheduleId}
                   onChange={handleChange}
+                  disabled={isLoadingCatalogs}
                 >
                   <option value="">
-                    Selecciona horario
+                    {isLoadingCatalogs
+                      ? "Cargando horarios..."
+                      : "Selecciona horario"}
                   </option>
 
                   {activeSchedules.map((schedule) => (
@@ -1207,9 +1555,7 @@ function EmployeeForm({
                       key={schedule.id}
                       value={schedule.id}
                     >
-                      {schedule.name}
-                      {" · "}
-                      {getScheduleDescription(schedule)}
+                      {getScheduleOptionLabel(schedule)}
                     </option>
                   ))}
                 </select>
@@ -1217,6 +1563,7 @@ function EmployeeForm({
                 <button
                   className="secondary-button compact-button"
                   type="button"
+                  disabled
                   onClick={openScheduleModal}
                 >
                   <Plus size={16} />

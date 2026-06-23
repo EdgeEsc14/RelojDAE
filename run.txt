@@ -1,0 +1,11 @@
+cd C:\RelojChecador\backend
+
+.\.v_relojdae\Scripts\python.exe -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+
+
+cd C:\RelojChecador\frontend
+npm.cmd run dev
+
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+cd C:\RelojChecador\backend
+.\.v_relojdae\Scripts\Activate.ps1
