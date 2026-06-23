@@ -9,3 +9,162 @@ npm.cmd run dev
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 cd C:\RelojChecador\backend
 .\.v_relojdae\Scripts\Activate.ps1
+
+
+Estamos trabajando en el proyecto RelojChecador / RelojDAE.
+
+Contexto general:
+El proyecto está en Windows en:
+
+C:\RelojChecador
+
+Estructura principal:
+
+C:\RelojChecador
+├── backend
+├── frontend
+└── database
+
+Backend:
+Ruta:
+
+C:\RelojChecador\backend
+
+Tecnología:
+FastAPI + PostgreSQL.
+
+Base de datos:
+
+dae_reloj
+
+Usuario local de app:
+
+reloj_app
+
+Comando para correr backend:
+
+cd C:\RelojChecador\backend
+..v_relojdae\Scripts\python.exe -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+
+URL backend:
+
+http://127.0.0.1:8000
+
+Frontend:
+Ruta:
+
+C:\RelojChecador\frontend
+
+Tecnología:
+React + Vite.
+
+Comando para correr frontend:
+
+cd C:\RelojChecador\frontend
+npm.cmd run dev
+
+URL frontend:
+
+http://localhost:5173
+
+Variable de entorno frontend:
+
+VITE_API_BASE_URL=http://127.0.0.1:8000/api/v1
+
+Estado actual:
+Ya conectamos parcialmente el frontend con FastAPI.
+
+Ya quedó:
+
+* Lista de empleados conectada a GET /api/v1/empleados.
+* Alta de empleados conectada a POST /api/v1/empleados.
+* Catálogos reales conectados:
+
+  * GET /api/v1/catalogos/unidades-organizacionales
+  * GET /api/v1/catalogos/puestos
+  * GET /api/v1/catalogos/horarios
+* Formulario de empleado:
+
+  * Código de empleado automático o manual.
+  * Nombre y apellidos separados.
+  * RFC opcional.
+  * Correo obligatorio.
+  * Fecha de ingreso.
+  * Área principal.
+  * Departamento específico.
+  * Puesto real.
+  * Horario real.
+* Después de crear empleado, ya se asigna horario con:
+  POST /api/v1/empleados/{codigo_empleado}/horarios/asignar
+
+Payload de horario usado:
+
+{
+"horario_id": Number(form.scheduleId),
+"fecha_inicio": form.fechaIngreso,
+"fecha_fin": null,
+"motivo": "Asignación inicial desde alta de empleado",
+"cerrar_asignaciones_activas": true
+}
+
+También quedó:
+
+* Se creó src/api/client.js
+* Se creó src/api/empleadosApi.js
+* Se creó src/api/catalogosApi.js
+* EmployeeDetailPage.jsx ya usa el endpoint:
+  GET /api/v1/empleados/{codigo_empleado}/perfil
+
+El endpoint /perfil devuelve estructura así:
+
+{
+"empleado": {},
+"unidad_organizacional": {},
+"puesto": {},
+"supervisor": {},
+"usuario_sistema": null,
+"horario_actual": {},
+"dispositivo": null
+}
+
+La vista “Ver empleado” ya quedó bien:
+
+* Muestra nombre completo.
+* Código empleado.
+* Puesto.
+* Área principal / división.
+* Departamento específico.
+* Supervisor.
+* Horario asignado.
+* Turno.
+* Fecha de inicio del horario.
+* Usuario ZKTeco si existe.
+
+Importante:
+La lista principal /employees todavía puede mostrar:
+
+* Sin área
+* Sin puesto
+* Sin horario
+* Sin usuario ZK
+  porque GET /api/v1/empleados todavía devuelve resumen básico.
+
+Lo siguiente recomendado:
+
+1. Enriquecer GET /api/v1/empleados para que la tabla principal muestre área, puesto, supervisor y horario reales.
+2. Conectar supervisor real en EmployeeForm.jsx, porque todavía puede venir de mockEmployees.
+3. Conectar dispositivo / usuario ZKTeco con:
+   POST /api/v1/empleados/{codigo_empleado}/dispositivos/asignar
+4. Conectar edición de empleado:
+   /employees/{codigo}/edit
+5. Después conectar asistencia diaria y marcaciones crudas.
+
+Último commit realizado:
+Se subieron los cambios a GitHub con la integración de empleados frontend con backend FastAPI.
+
+Quiero continuar desde el punto 1:
+Enriquecer GET /api/v1/empleados para que la tabla principal de empleados ya muestre datos reales de área, puesto, supervisor, horario y ZKTeco.
+Hazlo paso a paso, con comandos exactos de PowerShell y explicando qué debo ver en cada prueba.
+
+
+
