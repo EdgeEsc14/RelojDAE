@@ -1,4 +1,4 @@
-﻿BEGIN;
+BEGIN;
 
 UPDATE organizacion.puestos
 SET
@@ -65,7 +65,6 @@ WITH nuevos_puestos (
         )
 )
 INSERT INTO organizacion.puestos (
-    id,
     codigo,
     nombre,
     descripcion,
@@ -73,10 +72,6 @@ INSERT INTO organizacion.puestos (
     activo
 )
 SELECT
-    (
-        SELECT COALESCE(MAX(id), 0)
-        FROM organizacion.puestos
-    ) + ROW_NUMBER() OVER (ORDER BY np.codigo) AS id,
     np.codigo,
     np.nombre,
     np.descripcion,

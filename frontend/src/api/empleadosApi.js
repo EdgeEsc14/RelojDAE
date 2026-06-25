@@ -49,7 +49,14 @@ export const empleadosApi = {
       body: JSON.stringify(payload),
     });
   },
+  asignarDispositivo: async (codigoEmpleado, payload) => {
+    const response = await apiClient.post(
+      `/empleados/${codigoEmpleado}/dispositivos/asignar`,
+      payload,
+    );
 
+    return response.data;
+  },
   asignarDispositivo: (codigoEmpleado, payload) => {
     return apiRequest(`/empleados/${codigoEmpleado}/dispositivos/asignar`, {
       method: "POST",

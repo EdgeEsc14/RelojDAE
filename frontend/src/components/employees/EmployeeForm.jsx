@@ -73,7 +73,7 @@ function getNextAvailableZkUserId(employees) {
       )
       .filter((value) => Number.isInteger(value) && value > 0),
   );
-
+  /*RECUERDA AQUIIII PARA EL NUMERO DEFAULT*/
   let availableId = 1;
 
   while (usedIds.has(availableId)) {
@@ -163,6 +163,19 @@ function buildEmployeeSchedulePayload(form) {
     fecha_fin: null,
     motivo: "Asignación inicial desde alta de empleado",
     cerrar_asignaciones_activas: true,
+  };
+}
+
+function buildEmployeeDevicePayload(form, savedEmployee) {
+  const zkUserId = form.zkUserId.trim();
+
+  return {
+    dispositivo_id: 1,
+    zk_uid: Number(zkUserId),
+    zk_user_id: zkUserId,
+    nombre_en_dispositivo: savedEmployee.fullName,
+    privilegio: 0,
+    activo: true,
   };
 }
 function getEmployeesArrayFromApiResponse(response) {
@@ -575,7 +588,29 @@ function EmployeeForm({
     setSavedEmployee(null);
     setAutomaticEmployeeCode(!isEditMode);
   }, [initialForm, isEditMode]);
+  useEffect(() => {
+    if (isEditMode) return;
+    if (existingEmployees.length === 0) return;
 
+    setForm((currentForm) => ({
+      ...currentForm,
+      employeeCode:
+        currentForm.employeeCode === "EMP-0000" ||
+        !currentForm.employeeCode
+          ? suggestedEmployeeCode
+          : currentForm.employeeCode,
+      zkUserId:
+        currentForm.zkUserId === "1" ||
+        !currentForm.zkUserId
+          ? suggestedZkUserId
+          : currentForm.zkUserId,
+    }));
+  }, [
+    existingEmployees,
+    isEditMode,
+    suggestedEmployeeCode,
+    suggestedZkUserId,
+  ]);
     useEffect(() => {
       let isMounted = true;
 
@@ -667,7 +702,7 @@ function EmployeeForm({
 
       const employeesFromApi =
         getEmployeesArrayFromApiResponse(response);
-        
+
       setExistingEmployees(employeesFromApi);
       const currentEmployeeCode =
         initialEmployee?.employeeCode ??
@@ -1101,6 +1136,16 @@ function EmployeeForm({
       await empleadosApi.asignarHorario(
         savedEmployeeFromApi.employeeCode,
         schedulePayload,
+      );
+
+      const devicePayload = buildEmployeeDevicePayload(
+        form,
+        savedEmployeeFromApi,
+      );
+
+      await empleadosApi.asignarDispositivo(
+        savedEmployeeFromApi.employeeCode,
+        devicePayload,
       );
 
       setSavedEmployee(savedEmployeeFromApi);
