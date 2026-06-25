@@ -21,11 +21,7 @@ import { empleadosApi } from "../../api/empleadosApi";
 import { catalogosApi } from "../../api/catalogosApi";
 import {
   getScheduleDescription,
-  mockDepartments,
-  mockSchedules,
 } from "../../data/mockCatalogs";
-
-import { mockEmployees } from "../../data/mockEmployees";
 const WEEK_DAYS = [
   "Lunes",
   "Martes",
@@ -44,9 +40,16 @@ const INITIAL_SCHEDULE_FORM = {
   toleranceMinutes: "10",
   breakMinutes: "0",
 };
+
+
 function getNextEmployeeCode(employees) {
   const highestNumber = employees.reduce((maximum, employee) => {
-    const match = employee.employeeCode?.match(/^EMP-(\d+)$/);
+    const code =
+      employee.employeeCode ??
+      employee.codigo_empleado ??
+      "";
+
+    const match = code.match(/^EMP-(\d+)$/);
 
     if (!match) {
       return maximum;
@@ -61,7 +64,13 @@ function getNextEmployeeCode(employees) {
 function getNextAvailableZkUserId(employees) {
   const usedIds = new Set(
     employees
-      .map((employee) => Number(employee.zkUserId))
+      .map((employee) =>
+        Number(
+          employee.zkUserId ??
+            employee.zk_user_id ??
+            employee.zk_uid,
+        ),
+      )
       .filter((value) => Number.isInteger(value) && value > 0),
   );
 
@@ -74,15 +83,6 @@ function getNextAvailableZkUserId(employees) {
   return String(availableId);
 }
 
-function isSupervisorCandidate(employee) {
-  const supervisorTerms =
-    /supervisor|coordinador|jefe|director|gerente/i;
-
-  return (
-    employee.status === "Activo" &&
-    supervisorTerms.test(employee.position)
-  );
-}
 
 function normalizeName(value) {
   return value
@@ -164,6 +164,29 @@ function buildEmployeeSchedulePayload(form) {
     motivo: "Asignación inicial desde alta de empleado",
     cerrar_asignaciones_activas: true,
   };
+}
+function getEmployeesArrayFromApiResponse(response) {
+  if (Array.isArray(response)) {
+    return response;
+  }
+
+  if (Array.isArray(response?.items)) {
+    return response.items;
+  }
+
+  if (Array.isArray(response?.data)) {
+    return response.data;
+  }
+
+  if (Array.isArray(response?.empleados)) {
+    return response.empleados;
+  }
+
+  if (Array.isArray(response?.results)) {
+    return response.results;
+  }
+
+  return [];
 }
 function getCatalogArrayFromApiResponse(response) {
   if (Array.isArray(response)) {
@@ -307,15 +330,6 @@ function validateEmployee(form, editingEmployeeId = null) {
   } else if (!/^EMP-\d{4,}$/.test(employeeCode)) {
     errors.employeeCode =
       "Utiliza el formato EMP-0001.";
-  } else if (
-    mockEmployees.some(
-      (employee) =>
-        employee.id !== editingEmployeeId &&
-        employee.employeeCode.toUpperCase() === employeeCode,
-    )
-  ) {
-    errors.employeeCode =
-      "Ya existe un empleado con este código.";
   }
 
   if (!zkUserId) {
@@ -327,15 +341,6 @@ function validateEmployee(form, editingEmployeeId = null) {
   } else if (Number(zkUserId) <= 0) {
     errors.zkUserId =
       "El usuario Reloj debe ser mayor que cero.";
-  } else if (
-    mockEmployees.some(
-      (employee) =>
-        employee.id !== editingEmployeeId &&
-        String(employee.zkUserId) === zkUserId,
-    )
-  ) {
-    errors.zkUserId =
-      "Este usuario Reloj ya está asignado.";
   }
 
   if (!firstNames) {
@@ -354,17 +359,8 @@ function validateEmployee(form, editingEmployeeId = null) {
   ) {
     errors.rfc =
       "El RFC debe tener 13 caracteres y un formato válido.";
-  } else if (
-    rfc &&
-    mockEmployees.some(
-      (employee) =>
-        employee.id !== editingEmployeeId &&
-        employee.rfc?.toUpperCase() === rfc,
-    )
-  ) {
-    errors.rfc =
-      "Ya existe un empleado registrado con este RFC.";
   }
+
   if (!email) {
     errors.email =
       "El correo institucional es obligatorio.";
@@ -419,22 +415,46 @@ function validateEmployee(form, editingEmployeeId = null) {
 
   return errors;
 }
+function isRealSupervisorCandidate(employee) {
+  const hierarchyLevel =
+    Number(employee.puestoNivelJerarquico ?? 0);
 
+  const positionCode = String(
+    employee.puestoCodigo ?? "",
+  ).toUpperCase();
+
+  const positionName = String(
+    employee.puesto ?? "",
+  ).toUpperCase();
+
+  const hierarchyTerms =
+    /DIRECTOR|JEF|COORDINADOR|ENCARGADO|SUPERVISOR|RESPONSABLE/;
+
+  return (
+    hierarchyLevel > 0 ||
+    hierarchyTerms.test(positionCode) ||
+    hierarchyTerms.test(positionName)
+  );
+}
 function EmployeeForm({
   mode = "create",
   initialEmployee = null,
 }) {
+  const [supervisorOptions, setSupervisorOptions] = useState([]);
+  const [isLoadingSupervisors, setIsLoadingSupervisors] = useState(false);
+  const [supervisorsError, setSupervisorsError] = useState("");
+  const [existingEmployees, setExistingEmployees] = useState([]);
   const navigate = useNavigate();
   const isEditMode = mode === "edit";
 
   const suggestedEmployeeCode = useMemo(
-    () => getNextEmployeeCode(mockEmployees),
-    [],
+    () => getNextEmployeeCode(existingEmployees),
+    [existingEmployees],
   );
 
   const suggestedZkUserId = useMemo(
-    () => getNextAvailableZkUserId(mockEmployees),
-    [],
+    () => getNextAvailableZkUserId(existingEmployees),
+    [existingEmployees],
   );
 
   const initialForm = useMemo(() => {
@@ -556,78 +576,206 @@ function EmployeeForm({
     setAutomaticEmployeeCode(!isEditMode);
   }, [initialForm, isEditMode]);
 
+    useEffect(() => {
+      let isMounted = true;
+
+      async function loadCatalogs() {
+        try {
+          setIsLoadingCatalogs(true);
+          setCatalogsError("");
+
+          const [
+            departmentsResponse,
+            positionsResponse,
+            schedulesResponse,
+          ] = await Promise.all([
+            catalogosApi.listarUnidadesOrganizacionales(),
+            catalogosApi.listarPuestos(),
+            catalogosApi.listarHorarios(),
+          ]);
+
+          if (!isMounted) return;
+
+          const departmentsFromApi =
+            getCatalogArrayFromApiResponse(
+              departmentsResponse,
+            );
+
+          const positionsFromApi =
+            getCatalogArrayFromApiResponse(
+              positionsResponse,
+            );
+
+          const schedulesFromApi =
+            getCatalogArrayFromApiResponse(
+              schedulesResponse,
+            );
+
+          setDepartments(
+            departmentsFromApi.filter(
+              (department) => department.activo,
+            ),
+          );
+
+          setPositions(
+            positionsFromApi.filter(
+              (position) => position.activo,
+            ),
+          );
+
+          setSchedules(
+            schedulesFromApi.filter(
+              (schedule) => schedule.activo,
+            ),
+          );
+        } catch (error) {
+          if (!isMounted) return;
+
+          setCatalogsError(
+            error.message ||
+              "No fue posible cargar los catálogos desde el backend.",
+          );
+        } finally {
+          if (isMounted) {
+            setIsLoadingCatalogs(false);
+          }
+        }
+      }
+
+      loadCatalogs();
+
+      return () => {
+        isMounted = false;
+      };
+    }, []);
+
   useEffect(() => {
     let isMounted = true;
 
-    async function loadCatalogs() {
-      try {
-        setIsLoadingCatalogs(true);
-        setCatalogsError("");
+    async function loadSupervisors() {
+    try {
+      setIsLoadingSupervisors(true);
+      setSupervisorsError("");
 
-        const [
-          departmentsResponse,
-          positionsResponse,
-          schedulesResponse,
-        ] = await Promise.all([
-          catalogosApi.listarUnidadesOrganizacionales(),
-          catalogosApi.listarPuestos(),
-          catalogosApi.listarHorarios(),
-        ]);
+      const response = await empleadosApi.listar({
+        estatus: "ACTIVO",
+        limit: 100,
+        offset: 0,
+      });
 
-        if (!isMounted) return;
+      if (!isMounted) return;
 
-        const departmentsFromApi =
-          getCatalogArrayFromApiResponse(
-            departmentsResponse,
+      const employeesFromApi =
+        getEmployeesArrayFromApiResponse(response);
+        
+      setExistingEmployees(employeesFromApi);
+      const currentEmployeeCode =
+        initialEmployee?.employeeCode ??
+        initialEmployee?.codigo_empleado ??
+        "";
+
+      const selectedUnitId = Number(
+        form.departmentId || form.mainUnitId || 0,
+      );
+
+      const selectedMainUnitId = Number(form.mainUnitId || 0);
+
+      const options = employeesFromApi
+        .filter((employee) => {
+          const employeeCode =
+            employee.codigo_empleado ??
+            employee.employeeCode ??
+            "";
+
+          return employeeCode !== currentEmployeeCode;
+        })
+        .map((employee) => ({
+          id: employee.id,
+          codigoEmpleado:
+            employee.codigo_empleado ??
+            employee.employeeCode ??
+            "",
+          nombreCompleto:
+            employee.nombre_completo ??
+            employee.fullName ??
+            [
+              employee.nombres,
+              employee.apellido_paterno,
+              employee.apellido_materno,
+            ]
+              .filter(Boolean)
+              .join(" "),
+          puesto:
+            employee.puesto ??
+            employee.position ??
+            "Sin puesto",
+          puestoCodigo:
+            employee.puesto_codigo ??
+            "",
+          puestoNivelJerarquico:
+            Number(employee.puesto_nivel_jerarquico ?? 0),
+          unidadOrganizacionalId:
+            Number(employee.unidad_organizacional_id ?? 0),
+          areaPrincipalId:
+            Number(employee.area_principal_id ?? 0),
+          area:
+            employee.area_principal ??
+            employee.unidad_organizacional ??
+            employee.department ??
+            "Sin área",
+          departamento:
+            employee.unidad_organizacional ??
+            employee.department ??
+            "Sin departamento",
+        }))
+        .filter((employee) => employee.id && employee.nombreCompleto)
+        .filter(isRealSupervisorCandidate)
+        .sort((a, b) => {
+          const aSameUnit =
+            a.unidadOrganizacionalId === selectedUnitId ||
+            a.unidadOrganizacionalId === selectedMainUnitId ||
+            a.areaPrincipalId === selectedMainUnitId;
+
+          const bSameUnit =
+            b.unidadOrganizacionalId === selectedUnitId ||
+            b.unidadOrganizacionalId === selectedMainUnitId ||
+            b.areaPrincipalId === selectedMainUnitId;
+
+          if (aSameUnit && !bSameUnit) return -1;
+          if (!aSameUnit && bSameUnit) return 1;
+
+          return a.nombreCompleto.localeCompare(
+            b.nombreCompleto,
+            "es",
           );
+        });
 
-        const positionsFromApi =
-          getCatalogArrayFromApiResponse(
-            positionsResponse,
-          );
-        const schedulesFromApi =
-          getCatalogArrayFromApiResponse(
-            schedulesResponse,
-          );
-        /* ESto es temporal pa ver uqe onda */
-        console.log("Horarios desde API:", schedulesFromApi);
+      setSupervisorOptions(options);
+    } catch (error) {
+      if (!isMounted) return;
 
-        setDepartments(
-          departmentsFromApi.filter(
-            (department) => department.activo,
-          ),
-        );
-
-        setPositions(
-          positionsFromApi.filter(
-            (position) => position.activo,
-          ),
-        );
-        setSchedules(
-          schedulesFromApi.filter(
-            (schedule) => schedule.activo,
-          ),
-        );
-      } catch (error) {
-        if (!isMounted) return;
-
-        setCatalogsError(
-          error.message ||
-            "No fue posible cargar los catálogos desde el backend.",
-        );
-      } finally {
-        if (isMounted) {
-          setIsLoadingCatalogs(false);
-        }
+      setSupervisorOptions([]);
+      setSupervisorsError(
+        error.message ||
+          "No fue posible cargar los supervisores desde el backend.",
+      );
+    } finally {
+      if (isMounted) {
+        setIsLoadingSupervisors(false);
       }
     }
+  }
 
-    loadCatalogs();
+  loadSupervisors();
 
-    return () => {
-      isMounted = false;
-    };
-  }, []);
+  return () => {
+    isMounted = false;
+  };
+}, [
+  initialEmployee,
+  form.departmentId,
+  form.mainUnitId,
+]);
 
   const MAIN_ASSIGNABLE_UNIT_CODES = new Set([
     "DIV_ADMISION_CONTROL_ESCOLAR",
@@ -661,27 +809,6 @@ function EmployeeForm({
     () => schedules,
     [schedules],
   );
-
-  const supervisorCandidates = useMemo(
-    () => mockEmployees.filter(isSupervisorCandidate),
-    [],
-  );
-
-  const selectedDepartmentId = Number(
-    form.departmentId || form.mainUnitId,
-  );
-
-  const sameDepartmentSupervisors =
-    supervisorCandidates.filter(
-      (employee) =>
-        employee.departmentId === selectedDepartmentId,
-    );
-
-  const otherDepartmentSupervisors =
-    supervisorCandidates.filter(
-      (employee) =>
-        employee.departmentId !== selectedDepartmentId,
-    );
 
   function handleChange(event) {
     const { name, value } = event.target;
@@ -1315,19 +1442,36 @@ function EmployeeForm({
           </div>
         </div>
 
-        <div className="form-section">
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+                <div className="form-section">
           <div className="form-section-header">
             <div>
               <h3>Organización</h3>
 
               <p>
-                Division, puesto, supervisor y horario.
+                División, puesto, supervisor y horario.
               </p>
             </div>
           </div>
 
           <div className="form-grid">
-                        <div className="form-field">
+            <div className="form-field">
               <label htmlFor="mainUnitId">
                 Área principal
               </label>
@@ -1346,8 +1490,8 @@ function EmployeeForm({
               >
                 <option value="">
                   {isLoadingCatalogs
-                    ? "Cargando horarios..."
-                    : "Selecciona horario"}
+                    ? "Cargando áreas..."
+                    : "Selecciona área principal"}
                 </option>
 
                 {mainUnits.map((unit) => (
@@ -1474,50 +1618,41 @@ function EmployeeForm({
                 name="supervisorId"
                 value={form.supervisorId}
                 onChange={handleChange}
-                disabled={!form.departmentId}
+                disabled={isLoadingSupervisors}
               >
                 <option value="">
-                  {form.departmentId
-                    ? "Selecciona supervisor"
-                    : "Primero selecciona división"}
+                  {isLoadingSupervisors
+                    ? "Cargando supervisores..."
+                    : "Selecciona supervisor"}
                 </option>
 
                 <option value="none">
                   Sin supervisor asignado
                 </option>
+                
+                {!isLoadingSupervisors &&
+                  supervisorOptions.length === 0 && (
+                    <option value="" disabled>
+                      No hay supervisores configurados
+                    </option>
+                  )}
 
-                {sameDepartmentSupervisors.length > 0 && (
-                  <optgroup label="Del mismo departamento">
-                    {sameDepartmentSupervisors.map(
-                      (supervisor) => (
-                        <option
-                          key={supervisor.id}
-                          value={supervisor.id}
-                        >
-                          {supervisor.fullName}
-                        </option>
-                      ),
-                    )}
-                  </optgroup>
-                )}
 
-                {otherDepartmentSupervisors.length > 0 && (
-                  <optgroup label="De otros departamentos">
-                    {otherDepartmentSupervisors.map(
-                      (supervisor) => (
-                        <option
-                          key={supervisor.id}
-                          value={supervisor.id}
-                        >
-                          {supervisor.fullName}
-                          {" · "}
-                          {supervisor.department}
-                        </option>
-                      ),
-                    )}
-                  </optgroup>
-                )}
+                {supervisorOptions.map((supervisor) => (
+                  <option
+                    key={supervisor.id}
+                    value={supervisor.id}
+                  >
+                    {supervisor.codigoEmpleado} · {supervisor.nombreCompleto} · {supervisor.puesto}
+                  </option>
+                ))}
               </select>
+
+              {supervisorsError && (
+                <span className="field-error">
+                  {supervisorsError}
+                </span>
+              )}
 
               {errors.supervisorId && (
                 <span className="field-error">
@@ -1585,7 +1720,7 @@ function EmployeeForm({
             className="secondary-button link-button"
             to={
               isEditMode && initialEmployee
-                ? `/employees/${initialEmployee.id}`
+                ? `/employees/${initialEmployee.employeeCode}`
                 : "/employees"
             }
           >
@@ -1614,7 +1749,7 @@ function EmployeeForm({
                 : "Guardar empleado"}
           </button>
         </div>
-            </form>
+      </form>
 
       {showScheduleModal && (
         <div

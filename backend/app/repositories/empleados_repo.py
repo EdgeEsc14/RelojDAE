@@ -9,41 +9,40 @@ def listar_empleados(
     limit: int = 20,
     offset: int = 0,
 ) -> dict:
-    filtros = []
+    where_conditions: list[str] = []
     params: dict = {
         "limit": limit,
         "offset": offset,
     }
 
     if q:
-        filtros.append(
+        where_conditions.append(
             """
             (
-                codigo_empleado ILIKE :q
-                OR nombres ILIKE :q
-                OR apellido_paterno ILIKE :q
-                OR apellido_materno ILIKE :q
-                OR nombre_completo ILIKE :q
-                OR correo ILIKE :q
+                e.codigo_empleado ILIKE :q
+                OR e.nombres ILIKE :q
+                OR e.apellido_paterno ILIKE :q
+                OR e.apellido_materno ILIKE :q
+                OR e.nombre_completo ILIKE :q
+                OR e.correo ILIKE :q
             )
             """
         )
         params["q"] = f"%{q}%"
 
     if estatus:
-        filtros.append("estatus = :estatus")
+        where_conditions.append("e.estatus = :estatus")
         params["estatus"] = estatus
 
     where_sql = ""
-
-    if filtros:
-        where_sql = "WHERE " + " AND ".join(filtros)
+    if where_conditions:
+        where_sql = "WHERE " + " AND ".join(where_conditions)
 
     query_total = text(
         f"""
         SELECT
             COUNT(*) AS total
-        FROM personal.empleados
+        FROM personal.empleados e
         {where_sql}
         """
     )
@@ -51,36 +50,126 @@ def listar_empleados(
     query_items = text(
         f"""
         SELECT
-            id,
-            codigo_empleado,
-            nombres,
-            apellido_paterno,
-            apellido_materno,
-            NULLIF(
-                TRIM(CONCAT_WS(' ', apellido_paterno, apellido_materno)),
-                ''
-            ) AS apellidos,
-            nombre_completo,
-            correo,
-            estatus
-        FROM personal.empleados
+            e.id,
+            e.codigo_empleado,
+            e.nombres,
+            e.apellido_paterno,
+            e.apellido_materno,
+            CONCAT_WS(' ', e.apellido_paterno, e.apellido_materno) AS apellidos,
+            e.nombre_completo,
+            e.correo,
+            e.estatus,
+
+            uo.id AS unidad_organizacional_id,
+            uo.codigo AS unidad_organizacional_codigo,
+            uo.nombre AS unidad_organizacional,
+            tu.nombre AS unidad_organizacional_tipo,
+
+            uo_padre.id AS area_principal_id,
+            uo_padre.codigo AS area_principal_codigo,
+            COALESCE(uo_padre.nombre, uo.nombre) AS area_principal,
+
+            p.id AS puesto_id,
+            p.codigo AS puesto_codigo,
+            p.nombre AS puesto,
+            p.nivel_jerarquico AS puesto_nivel_jerarquico,
+
+            sup.id AS supervisor_id,
+            sup.codigo_empleado AS supervisor_codigo_empleado,
+            sup.nombre_completo AS supervisor,
+
+            h.id AS horario_id,
+            h.codigo AS horario_codigo,
+            h.nombre AS horario,
+            tt.nombre AS turno,
+            tt.codigo AS turno_codigo,
+            ah.fecha_inicio AS horario_fecha_inicio,
+            ah.fecha_fin AS horario_fecha_fin,
+
+            ed.id AS empleado_dispositivo_id,
+            ed.dispositivo_id,
+            d.codigo AS dispositivo_codigo,
+            d.nombre AS dispositivo,
+            ed.zk_uid,
+            ed.zk_user_id,
+            ed.nombre_en_dispositivo,
+            ed.sincronizado AS dispositivo_sincronizado
+
+        FROM personal.empleados e
+
+        LEFT JOIN organizacion.unidades_organizacionales uo
+            ON uo.id = e.unidad_organizacional_id
+
+        LEFT JOIN organizacion.tipos_unidad tu
+            ON tu.id = uo.tipo_unidad_id
+
+        LEFT JOIN organizacion.unidades_organizacionales uo_padre
+            ON uo_padre.id = uo.unidad_padre_id
+
+        LEFT JOIN organizacion.puestos p
+            ON p.id = e.puesto_id
+
+        LEFT JOIN personal.empleados sup
+            ON sup.id = e.supervisor_id
+
+        LEFT JOIN LATERAL (
+            SELECT
+                ah_inner.id,
+                ah_inner.empleado_id,
+                ah_inner.horario_id,
+                ah_inner.fecha_inicio,
+                ah_inner.fecha_fin,
+                ah_inner.estatus
+            FROM asistencia.asignaciones_horario ah_inner
+            WHERE ah_inner.empleado_id = e.id
+              AND ah_inner.estatus = 'ACTIVA'
+            ORDER BY ah_inner.fecha_inicio DESC, ah_inner.id DESC
+            LIMIT 1
+        ) ah ON true
+
+        LEFT JOIN asistencia.horarios h
+            ON h.id = ah.horario_id
+
+        LEFT JOIN asistencia.tipos_turno tt
+            ON tt.id = h.tipo_turno_id
+
+        LEFT JOIN LATERAL (
+            SELECT
+                ed_inner.id,
+                ed_inner.empleado_id,
+                ed_inner.dispositivo_id,
+                ed_inner.zk_uid,
+                ed_inner.zk_user_id,
+                ed_inner.nombre_en_dispositivo,
+                ed_inner.sincronizado,
+                ed_inner.activo
+            FROM dispositivos.empleado_dispositivo ed_inner
+            WHERE ed_inner.empleado_id = e.id
+              AND ed_inner.activo = true
+            ORDER BY ed_inner.id DESC
+            LIMIT 1
+        ) ed ON true
+
+        LEFT JOIN dispositivos.dispositivos d
+            ON d.id = ed.dispositivo_id
+
         {where_sql}
-        ORDER BY id
+
+        ORDER BY e.id
         LIMIT :limit
         OFFSET :offset
         """
     )
 
-    total = db.execute(query_total, params).scalar_one()
-    rows = db.execute(query_items, params).mappings().all()
+    total_result = db.execute(query_total, params).mappings().first()
+    items_result = db.execute(query_items, params).mappings().all()
 
     return {
-        "total": total,
+        "total": total_result["total"] if total_result else 0,
         "limit": limit,
         "offset": offset,
-        "items": [dict(row) for row in rows],
+        "items": [dict(row) for row in items_result],
     }
-
 
 def obtener_empleado_por_codigo(
     db: Session,

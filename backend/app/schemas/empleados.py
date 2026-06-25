@@ -14,8 +14,45 @@ class EmpleadoResumen(BaseModel):
     correo: str | None = None
     estatus: str | None = None
 
-    model_config = ConfigDict(from_attributes=True)
+    # Organización
+    unidad_organizacional_id: int | None = None
+    unidad_organizacional: str | None = None
+    unidad_organizacional_codigo: str | None = None
+    unidad_organizacional_tipo: str | None = None
 
+    area_principal_id: int | None = None
+    area_principal: str | None = None
+    area_principal_codigo: str | None = None
+
+    # Puesto
+    puesto_id: int | None = None
+    puesto: str | None = None
+    puesto_codigo: str | None = None
+    puesto_nivel_jerarquico: int | None = None
+
+    # Supervisor
+    supervisor_id: int | None = None
+    supervisor_codigo_empleado: str | None = None
+    supervisor: str | None = None
+
+    # Horario actual
+    horario_id: int | None = None
+    horario: str | None = None
+    horario_codigo: str | None = None
+    turno: str | None = None
+    turno_codigo: str | None = None
+    horario_fecha_inicio: date | None = None
+    horario_fecha_fin: date | None = None
+
+    # ZKTeco / dispositivo
+    empleado_dispositivo_id: int | None = None
+    dispositivo_id: int | None = None
+    dispositivo_codigo: str | None = None
+    dispositivo: str | None = None
+    zk_uid: int | None = None
+    zk_user_id: str | None = None
+    nombre_en_dispositivo: str | None = None
+    dispositivo_sincronizado: bool | None = None
 
 class EmpleadosListadoResponse(BaseModel):
     total: int

@@ -3027,3 +3027,34 @@ a {
     justify-content: center;
   }
 }
+
+.table-stacked-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.table-stacked-cell strong {
+  display: block;
+  color: var(--text-primary);
+  font-size: 0.88rem;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.table-stacked-cell span {
+  display: block;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  line-height: 1.3;
+}
+
+.table-organization-cell {
+  max-width: 260px;
+}
+
+.muted-table-text {
+  color: var(--text-secondary);
+  font-size: 0.83rem;
+}

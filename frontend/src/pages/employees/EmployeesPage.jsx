@@ -116,6 +116,22 @@ function getEmployeesArrayFromApiResponse(response) {
 /* Funcion de mapeo para conectar la API
 protege el diseño aunque el backend todavía no regrese todos los campos */
 function mapEmployeeFromApi(employee) {
+  const fullName =
+    employee.nombre_completo ??
+    employee.fullName ??
+    [
+      employee.nombres,
+      employee.apellido_paterno,
+      employee.apellido_materno,
+    ]
+      .filter(Boolean)
+      .join(" ");
+
+  const scheduleText =
+    employee.horario && employee.turno
+      ? `${employee.horario} · ${employee.turno}`
+      : employee.horario || employee.schedule || null;
+
   return {
     id: employee.id ?? employee.empleado_id ?? employee.codigo_empleado,
 
@@ -124,17 +140,7 @@ function mapEmployeeFromApi(employee) {
       employee.employeeCode ??
       "Sin código",
 
-    fullName:
-      employee.nombre_completo ??
-      employee.fullName ??
-      [
-        employee.nombres,
-        employee.apellido_paterno,
-        employee.apellido_materno,
-      ]
-        .filter(Boolean)
-        .join(" ") ??
-      "Sin nombre",
+    fullName: fullName || "Sin nombre",
 
     email:
       employee.correo ??
@@ -151,31 +157,88 @@ function mapEmployeeFromApi(employee) {
       employee.departmentId ??
       null,
 
-    department:
-      employee.unidad_organizacional_nombre ??
-      employee.departamento_nombre ??
-      employee.department ??
+    areaId:
+      employee.area_principal_id ??
+      null,
+
+    area:
+      employee.area_principal ??
+      employee.area ??
+      employee.unidad_organizacional ??
       "Sin área",
 
+    department:
+      employee.unidad_organizacional ??
+      employee.departamento_nombre ??
+      employee.department ??
+      "Sin departamento",
+
+    departmentCode:
+      employee.unidad_organizacional_codigo ??
+      employee.departmentCode ??
+      "",
+
     position:
+      employee.puesto ??
       employee.puesto_nombre ??
       employee.position ??
       "Sin puesto",
 
+    positionCode:
+      employee.puesto_codigo ??
+      "",
+
     supervisor:
-      employee.supervisor_nombre ??
-      employee.supervisor ??
-      "Sin supervisor",
+      employee.supervisor?.trim() ||
+      employee.supervisor_nombre?.trim() ||
+      employee.supervisor_name?.trim() ||
+      null,
+
+    supervisorCode:
+      employee.supervisor_codigo_empleado ??
+      "",
 
     zkUserId:
-      employee.zk_user_id ??
-      employee.zkUserId ??
-      "Sin usuario ZK",
+      employee.zk_user_id ||
+      employee.zk_uid ||
+      employee.zkUserId ||
+      null,
+
+    zkUid:
+      employee.zk_uid ??
+      null,
+
+    device:
+      employee.dispositivo ||
+      employee.dispositivo_codigo ||
+      null,
+
+    deviceCode:
+      employee.dispositivo_codigo ??
+      "",
 
     schedule:
-      employee.horario_nombre ??
-      employee.schedule ??
-      "Sin horario",
+      scheduleText,
+
+    scheduleId:
+      employee.horario_id ??
+      null,
+
+    shift:
+      employee.turno ??
+      "Sin turno",
+
+    shiftCode:
+      employee.turno_codigo ??
+      "",
+
+    scheduleStartDate:
+      employee.horario_fecha_inicio ??
+      null,
+
+    scheduleEndDate:
+      employee.horario_fecha_fin ??
+      null,
 
     lastCheck:
       employee.ultima_checada ??
@@ -336,9 +399,13 @@ function EmployeesPage() {
         employee.employeeCode,
         employee.fullName,
         employee.position,
+        employee.area,
         employee.department,
         employee.zkUserId,
+        employee.zkUid,
+        employee.device,
         employee.schedule,
+        employee.shift,
         employee.status,
         employee.attendanceStatus,
         employee.rfc,
@@ -353,7 +420,7 @@ function EmployeesPage() {
 
       const matchesDepartment =
         selectedDepartment === "todos" ||
-        employee.department === selectedDepartment;
+        employee.area === selectedDepartment;
 
       const matchesStatus =
         selectedStatus === "todos" ||
@@ -450,7 +517,7 @@ function EmployeesPage() {
   ).length;
 
   const departments = new Set(
-    scopedEmployees.map((employee) => employee.department),
+    scopedEmployees.map((employee) => employee.area),
   );
 
   const canCreateEmployee =
@@ -732,7 +799,7 @@ function EmployeesPage() {
                   <th>Código</th>
                   <th>Empleado</th>
                   <th>Usuario ZK</th>
-                  <th>Área</th>
+                  <th>División / Departamento</th>
                   <th>Horario</th>
                   <th>Última checada</th>
                   <th>Asistencia</th>
@@ -764,15 +831,62 @@ function EmployeesPage() {
                           <span>
                             {employee.position}
                           </span>
+
+                          <span>
+                            {employee.supervisor
+                              ? `Supervisor: ${employee.supervisor}`
+                              : "Sin supervisor asignado"}
+                          </span>
                         </div>
                       </div>
                     </td>
 
-                    <td>{employee.zkUserId}</td>
-                    <td>{employee.department}</td>
-                    <td>{employee.schedule}</td>
-                    <td>{employee.lastPunch}</td>
+                    <td>
+                      {employee.zkUserId ? (
+                        <div className="table-stacked-cell">
+                          <strong>{employee.zkUserId}</strong>
 
+                          {employee.device && (
+                            <span>{employee.device}</span>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="muted-table-text">
+                          Sin usuario ZK
+                        </span>
+                      )}
+                    </td>
+
+                    <td>
+                      <div className="table-stacked-cell table-organization-cell">
+                        <strong>{employee.area}</strong>
+
+                        {employee.department &&
+                          employee.department !== employee.area && (
+                            <span>{employee.department}</span>
+                          )}
+                      </div>
+                    </td>
+
+                    <td>
+                      {employee.schedule ? (
+                        <div className="table-stacked-cell">
+                          <strong>{employee.schedule}</strong>
+
+                          {employee.scheduleStartDate && (
+                            <span>
+                              Desde {employee.scheduleStartDate}
+                            </span>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="muted-table-text">
+                          Sin horario
+                        </span>
+                      )}
+                    </td>
+
+                    <td>{employee.lastCheck}</td>
                     <td>
                       <span
                         className={getAttendanceClass(
