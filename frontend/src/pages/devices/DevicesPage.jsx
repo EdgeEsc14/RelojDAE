@@ -1,4 +1,6 @@
 import { Link } from "react-router-dom";
+
+import ZkUsersPanel from "../../components/devices/ZkUsersPanel";
 import {
   Activity,
   Database,
@@ -197,6 +199,8 @@ function DevicesPage() {
           </p>
         </div>
       </section>
+
+      <ZkUsersPanel />
     </div>
   );
 }

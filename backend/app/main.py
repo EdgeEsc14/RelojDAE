@@ -4,6 +4,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.v1.router import router as api_v1_router
 from app.core.config import get_settings
 
+#relok
+from app.api.routes.zk import router as zk_router
+
 
 settings = get_settings()
 
@@ -14,6 +17,7 @@ app = FastAPI(
     debug=settings.DEBUG,
 )
 
+app.include_router(zk_router, prefix="/api")
 
 app.add_middleware(
     CORSMiddleware,
