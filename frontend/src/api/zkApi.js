@@ -45,3 +45,64 @@ export async function getZkUserByUserId(userId) {
 
   return request(`/zk/users/${encodeURIComponent(userId)}`);
 }
+
+export async function getZkEmployeeReconciliation() {
+  return request("/zk/reconciliation/employees");
+}
+
+export async function linkEmployeeWithZkUser({ codigoEmpleado, zkUserId }) {
+  if (!codigoEmpleado) {
+    throw new Error("El código de empleado es obligatorio.");
+  }
+
+  if (!zkUserId) {
+    throw new Error("El User ID ZKTeco es obligatorio.");
+  }
+
+  return request(
+    `/zk/reconciliation/employees/${encodeURIComponent(codigoEmpleado)}/link`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({
+        zk_user_id: String(zkUserId),
+      }),
+    }
+  );
+}
+
+export async function unlinkEmployeeFromZkUser(codigoEmpleado) {
+  if (!codigoEmpleado) {
+    throw new Error("El código de empleado es obligatorio.");
+  }
+
+  return request(
+    `/zk/reconciliation/employees/${encodeURIComponent(codigoEmpleado)}/unlink`,
+    {
+      method: "PATCH",
+    }
+  );
+}
+export async function getZkAttendanceRaw({
+  limit = 100,
+  userId = "",
+  dateFrom = "",
+  dateTo = "",
+} = {}) {
+  const params = new URLSearchParams();
+
+  params.set("limit", String(limit));
+
+  if (userId.trim()) {
+    params.set("user_id", userId.trim());
+  }
+
+  if (dateFrom) {
+    params.set("date_from", dateFrom);
+  }
+
+  if (dateTo) {
+    params.set("date_to", dateTo);
+  }
+
+  return request(`/zk/attendance/raw?${params.toString()}`);
+}

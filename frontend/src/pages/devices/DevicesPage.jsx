@@ -1,6 +1,10 @@
 import { Link } from "react-router-dom";
 
 import ZkUsersPanel from "../../components/devices/ZkUsersPanel";
+import ZkReconciliationPanel from "../../components/devices/ZkReconciliationPanel";
+/*import ZkAttendanceRawPanel from "../../components/devices/ZkAttendanceRawPanel";
+
+Esta mal esta ruta */ 
 import {
   Activity,
   Database,
@@ -201,6 +205,7 @@ function DevicesPage() {
       </section>
 
       <ZkUsersPanel />
+      <ZkReconciliationPanel />
     </div>
   );
 }
