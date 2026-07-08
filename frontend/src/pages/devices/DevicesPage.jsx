@@ -21,7 +21,7 @@ import {
 
 import PageHeader from "../../components/layout/PageHeader";
 import { mockDevices } from "../../data/mockDevices";
-
+import ZkTimeSyncPanel from "../../components/devices/ZkTimeSyncPanel";
 function getDeviceStatusClass(status) {
   if (status === "Conectado") return "badge success";
   if (status === "Revisar") return "badge warning";
@@ -203,7 +203,7 @@ function DevicesPage() {
           </p>
         </div>
       </section>
-
+      <ZkTimeSyncPanel />
       <ZkUsersPanel />
       <ZkReconciliationPanel />
     </div>

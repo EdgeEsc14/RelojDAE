@@ -106,3 +106,71 @@ export async function getZkAttendanceRaw({
 
   return request(`/zk/attendance/raw?${params.toString()}`);
 }
+
+export async function syncZkAttendanceToDb({
+  limit = 1000,
+  userId = "",
+  dateFrom = "",
+  dateTo = "",
+} = {}) {
+  const params = new URLSearchParams();
+
+  params.set("limit", String(limit));
+
+  if (userId.trim()) {
+    params.set("user_id", userId.trim());
+  }
+
+  if (dateFrom) {
+    params.set("date_from", dateFrom);
+  }
+
+  if (dateTo) {
+    params.set("date_to", dateTo);
+  }
+
+  return request(`/zk/attendance/sync?${params.toString()}`, {
+    method: "POST",
+  });
+}
+
+export async function getZkAttendanceFromDb({
+  limit = 100,
+  userId = "",
+  dateFrom = "",
+  dateTo = "",
+} = {}) {
+  const params = new URLSearchParams();
+
+  params.set("limit", String(limit));
+
+  if (userId.trim()) {
+    params.set("user_id", userId.trim());
+  }
+
+  if (dateFrom) {
+    params.set("date_from", dateFrom);
+  }
+
+  if (dateTo) {
+    params.set("date_to", dateTo);
+  }
+
+  return request(`/zk/attendance/db?${params.toString()}`);
+}
+export async function syncZkTime({ force = false } = {}) {
+  const params = new URLSearchParams();
+
+  if (force) {
+    params.set("force", "true");
+  }
+
+  const queryString = params.toString();
+
+  return request(
+    `/zk/time/sync${queryString ? `?${queryString}` : ""}`,
+    {
+      method: "POST",
+    }
+  );
+}

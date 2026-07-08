@@ -20,7 +20,7 @@ import {
   MODULES,
 } from "../../constants/permissions";
 
-import { currentUser } from "../../data/currentUser";
+import { useAuth } from "../../context/AuthContext";
 /* Esta cosa solamente era de prueba 
 import { mockEmployees } from "../../data/mockEmployees";*/
 import { empleadosApi } from "../../api/empleadosApi";
@@ -258,6 +258,21 @@ function mapEmployeeFromApi(employee) {
 
 
 function EmployeesPage() {
+  const { user } = useAuth();
+
+  const currentEmployeeId =
+    user?.employeeId ??
+    user?.empleadoId ??
+    user?.raw?.empleado_id ??
+    null;
+
+  const currentDepartmentId =
+    user?.departmentId ??
+    user?.departamentoId ??
+    user?.raw?.department_id ??
+    user?.raw?.departamento_id ??
+    null;
+
   const [employees, setEmployees] = useState([]);
   const [isLoadingEmployees, setIsLoadingEmployees] =
     useState(false);
@@ -281,7 +296,7 @@ function EmployeesPage() {
   const [rowsPerPage, setRowsPerPage] = useState(5);
 
   const employeeAccess = getModuleAccess(
-    currentUser.role,
+    user?.role,
     MODULES.EMPLEADOS,
   );
   useEffect(() => {
@@ -343,20 +358,20 @@ function EmployeesPage() {
       if (employeeAccess === ACCESS_LEVELS.AREA) {
         return (
           Number(employee.departmentId) ===
-          Number(currentUser.departmentId)
+          Number(currentDepartmentId)
         );
       }
 
       if (employeeAccess === ACCESS_LEVELS.PROPIO) {
         return (
           Number(employee.id) ===
-          Number(currentUser.employeeId)
+          Number(currentEmployeeId)
         );
       }
 
       return false;
     });
-  }, [employeeAccess, employees]);
+  }, [employeeAccess, employees, currentDepartmentId, currentEmployeeId]);
 
   /*
    * Opciones disponibles para el filtro de departamentos.

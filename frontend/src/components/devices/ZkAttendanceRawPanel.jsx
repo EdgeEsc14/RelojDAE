@@ -3,13 +3,20 @@ import {
   AlertTriangle,
   CalendarDays,
   Clock3,
+  Database,
+  Download,
   Fingerprint,
   RefreshCcw,
   RotateCcw,
   Search,
 } from "lucide-react";
 
-import { getZkAttendanceRaw, getZkUsers } from "../../api/zkApi";
+import {
+  getZkAttendanceFromDb,
+  getZkAttendanceRaw,
+  getZkUsers,
+  syncZkAttendanceToDb,
+} from "../../api/zkApi";
 
 function safeText(value, fallback = "-") {
   if (value === null || value === undefined || value === "") {
@@ -31,8 +38,9 @@ function getPunchBadgeClass(punch) {
 
   if (punchNumber === 0) return "badge success";
   if (punchNumber === 1) return "badge warning";
+  if ([2, 3, 4, 5].includes(punchNumber)) return "badge neutral";
 
-  return "badge neutral";
+  return "badge danger";
 }
 
 export default function ZkAttendanceRawPanel() {
@@ -48,23 +56,43 @@ export default function ZkAttendanceRawPanel() {
   const [searchTerm, setSearchTerm] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-
-  async function loadAttendance() {
+  const [source, setSource] = useState("live");
+  const [syncLoading, setSyncLoading] = useState(false);
+  const [syncMessage, setSyncMessage] = useState("");
+  async function loadAttendance(sourceOverride = source) {
     setLoading(true);
     setError("");
+    setSyncMessage("");
 
     try {
+      const attendanceRequest =
+        sourceOverride === "db"
+          ? getZkAttendanceFromDb({
+              limit,
+              userId,
+              dateFrom,
+              dateTo,
+            })
+          : getZkAttendanceRaw({
+              limit,
+              userId,
+              dateFrom,
+              dateTo,
+            });
+
       const [attendanceResponse, usersResponse] = await Promise.all([
-        getZkAttendanceRaw({
-          limit,
-          userId,
-          dateFrom,
-          dateTo,
-        }),
+        attendanceRequest,
         getZkUsers({ includeAdmin: true }),
       ]);
 
-      setRecords(attendanceResponse.records || []);
+      const normalizedRecords = (attendanceResponse.records || []).map((record) => ({
+        ...record,
+        uid: record.uid ?? record.zk_uid_registro,
+        user_id: record.user_id ?? record.zk_user_id,
+        timestamp: record.timestamp ?? record.fecha_hora,
+      }));
+
+      setRecords(normalizedRecords);
       setTotal(attendanceResponse.total || 0);
       setUsers(usersResponse.users || []);
     } catch (err) {
@@ -73,6 +101,37 @@ export default function ZkAttendanceRawPanel() {
       setTotal(0);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleSyncToDb() {
+    setSyncLoading(true);
+    setError("");
+    setSyncMessage("");
+
+    try {
+      const response = await syncZkAttendanceToDb({
+        limit: 1000,
+        userId,
+        dateFrom,
+        dateTo,
+      });
+
+      const result = response.result || {};
+
+      setSyncMessage(
+        `Sincronización completada. Insertadas: ${result.insertadas || 0}, duplicadas: ${
+          result.duplicadas || 0
+        }, omitidas: ${result.omitidas || 0}.`
+      );
+
+      setSource("db");
+
+      await loadAttendance("db");
+    } catch (err) {
+      setError(err.message || "No se pudo sincronizar a PostgreSQL.");
+    } finally {
+      setSyncLoading(false);
     }
   }
 
@@ -130,6 +189,92 @@ export default function ZkAttendanceRawPanel() {
     setLimit(100);
   }
 
+  function escapeCsvValue(value) {
+  const text = safeText(value, "");
+
+  if (
+    text.includes(",") ||
+    text.includes('"') ||
+    text.includes("\n") ||
+    text.includes("\r")
+  ) {
+    return `"${text.replaceAll('"', '""')}"`;
+  }
+
+  return text;
+}
+
+function handleExportCsv() {
+  const rowsToExport = filteredRecords;
+
+  if (rowsToExport.length === 0) {
+    setError("No hay registros para exportar.");
+    return;
+  }
+
+  const headers = [
+    "Fuente",
+    "ID BD",
+    "UID registro ZKTeco",
+    "User ID ZKTeco",
+    "Usuario ZKTeco",
+    "Codigo empleado",
+    "Empleado",
+    "Fecha",
+    "Hora",
+    "Fecha hora",
+    "Punch",
+    "Punch label",
+    "Status",
+    "Status label",
+    "Sync run",
+  ];
+
+  const rows = rowsToExport.map((record) => {
+    const zkUserName = getZkUserName(record.user_id);
+    const sourceLabel = source === "db" ? "PostgreSQL" : "Reloj en vivo";
+
+    return [
+      sourceLabel,
+      record.id,
+      record.uid,
+      record.user_id,
+      zkUserName,
+      record.codigo_empleado,
+      record.empleado_nombre,
+      record.fecha,
+      record.hora,
+      record.timestamp,
+      record.punch,
+      record.punch_label,
+      record.status,
+      record.status_label,
+      record.sync_run_id,
+    ];
+  });
+
+  const csvContent = [
+    headers.map(escapeCsvValue).join(","),
+    ...rows.map((row) => row.map(escapeCsvValue).join(",")),
+  ].join("\n");
+
+  const blob = new Blob([`\uFEFF${csvContent}`], {
+    type: "text/csv;charset=utf-8;",
+  });
+
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+
+  const todayText = getTodayInputValue();
+  const sourceText = source === "db" ? "postgresql" : "reloj";
+
+  link.href = url;
+  link.download = `checadas_crudas_${sourceText}_${todayText}.csv`;
+  link.click();
+
+  URL.revokeObjectURL(url);
+}
+
   const filteredRecords = useMemo(() => {
     const term = searchTerm.trim().toLowerCase();
 
@@ -152,7 +297,9 @@ export default function ZkAttendanceRawPanel() {
 
   const entradaCount = records.filter((record) => Number(record.punch) === 0).length;
   const salidaCount = records.filter((record) => Number(record.punch) === 1).length;
-
+  const otrosPunchCount = records.filter(
+    (record) => ![0, 1].includes(Number(record.punch))
+  ).length;
   return (
     <section className="panel-card">
       <div className="section-header">
@@ -165,6 +312,45 @@ export default function ZkAttendanceRawPanel() {
         </div>
 
         <div className="header-actions">
+
+
+          <select
+            value={source}
+            onChange={(event) => {
+              const newSource = event.target.value;
+              setSource(newSource);
+              loadAttendance(newSource);
+            }}
+            disabled={loading || syncLoading}
+            style={{
+              minHeight: "42px",
+              borderRadius: "12px",
+              border: "1px solid #ddd",
+              padding: "0 12px",
+              minWidth: "190px",
+            }}
+          >
+            <option value="live">Reloj en vivo</option>
+            <option value="db">PostgreSQL</option>
+          </select>
+
+          <button
+            className="primary-button"
+            type="button"
+            onClick={handleSyncToDb}
+            disabled={loading || syncLoading}
+          >
+            {syncLoading ? "Sincronizando..." : "Sincronizar a BD"}
+          </button>
+          <button
+            className="secondary-button"
+            type="button"
+            onClick={handleExportCsv}
+            disabled={loading || syncLoading || filteredRecords.length === 0}
+          >
+            <Download size={17} />
+            Exportar CSV
+          </button>
           <button
             className="secondary-button"
             type="button"
@@ -182,7 +368,7 @@ export default function ZkAttendanceRawPanel() {
             disabled={loading}
           >
             <RotateCcw size={17} />
-            Recargar página
+            Recargar sección
           </button>
         </div>
       </div>
@@ -193,9 +379,9 @@ export default function ZkAttendanceRawPanel() {
             <Fingerprint size={22} />
           </div>
           <div>
-            <p>Total filtrado</p>
+            <p>{source === "db" ? "Total en BD" : "Total filtrado"}</p>
             <strong>{total}</strong>
-            <span>Marcaciones encontradas</span>
+            <span>{source === "db" ? "Desde PostgreSQL" : "Desde reloj ZKTeco"}</span>
           </div>
         </article>
 
@@ -226,9 +412,9 @@ export default function ZkAttendanceRawPanel() {
             <CalendarDays size={22} />
           </div>
           <div>
-            <p>Salidas</p>
-            <strong>{salidaCount}</strong>
-            <span>Punch 1</span>
+            <p>Salidas / otros</p>
+            <strong>{salidaCount} / {otrosPunchCount}</strong>
+            <span>Punch 1 / Punch 2+</span>
           </div>
         </article>
       </section>
@@ -334,7 +520,15 @@ export default function ZkAttendanceRawPanel() {
           </div>
         </section>
       )}
-
+      {syncMessage && (
+        <section className="warning-banner">
+          <Database size={22} />
+          <div>
+            <strong>Sincronización a PostgreSQL</strong>
+            <p>{syncMessage}</p>
+          </div>
+        </section>
+      )}
       <div className="device-card-grid">
         {filteredRecords.map((record) => {
           const zkUserName = getZkUserName(record.user_id);

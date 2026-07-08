@@ -7,7 +7,7 @@ from app.core.config import get_settings
 #relok
 from app.api.routes.zk import router as zk_router
 
-
+from app.api.routes.auth import router as auth_router
 settings = get_settings()
 
 
@@ -32,7 +32,7 @@ app.include_router(
     api_v1_router,
     prefix=settings.API_PREFIX,
 )
-
+app.include_router(auth_router, prefix="/api/v1")
 
 @app.get("/")
 def root() -> dict:

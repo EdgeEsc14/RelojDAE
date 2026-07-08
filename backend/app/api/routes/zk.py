@@ -1,10 +1,16 @@
+import os
 from datetime import datetime
 from typing import Annotated
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.repositories.zk_attendance_repo import (
+    insertar_marcaciones_crudas,
+    listar_marcaciones_crudas_db,
+)
 from app.repositories.zk_employee_link_repo import (
     desvincular_empleado_de_zk,
     vincular_empleado_con_zk_user_id,
@@ -12,8 +18,7 @@ from app.repositories.zk_employee_link_repo import (
 from app.repositories.zk_reconciliation_repo import conciliar_empleados_con_usuarios_zk
 from app.schemas.zk import ZkEmployeeLinkRequest
 from app.services.zk_service import ZKDeviceService
-
-
+from app.services.zk_time_sync_service import sync_zk_time_if_allowed
 router = APIRouter(
     prefix="/zk",
     tags=["ZKTeco"],
@@ -454,3 +459,205 @@ def list_zk_attendance_raw(
                 "error": str(exc),
             },
         ) from exc
+    
+@router.post("/attendance/sync")
+def sync_zk_attendance_to_db(
+    
+    db: Annotated[Session, Depends(get_db)],
+    limit: Annotated[int, Query(ge=1, le=5000)] = 1000,
+    user_id: Annotated[
+        str | None,
+        Query(description="Filtrar por User ID ZKTeco antes de sincronizar"),
+    ] = None,
+    date_from: Annotated[
+        str | None,
+        Query(description="Fecha inicial YYYY-MM-DD"),
+    ] = None,
+    date_to: Annotated[
+        str | None,
+        Query(description="Fecha final YYYY-MM-DD"),
+    ] = None,
+):
+    sync_zk_time_if_allowed()
+    """
+    Sincroniza marcaciones crudas desde el reloj hacia PostgreSQL.
+
+    Seguridad:
+    - No borra marcaciones del reloj.
+    - No modifica marcaciones del reloj.
+    - Solo inserta copia cruda en asistencia.marcaciones_crudas.
+    - No duplica marcaciones ya sincronizadas.
+    """
+    try:
+        parsed_date_from = None
+        parsed_date_to = None
+
+        if date_from:
+            parsed_date_from = datetime.strptime(date_from, "%Y-%m-%d").date()
+
+        if date_to:
+            parsed_date_to = datetime.strptime(date_to, "%Y-%m-%d").date()
+
+        service = ZKDeviceService()
+
+        with service.connection(disable_device=True) as conn:
+            raw_attendances = conn.get_attendance()
+
+        records = [_attendance_to_dict(item) for item in raw_attendances]
+
+        if user_id:
+            user_id_clean = _clean_text(user_id)
+            records = [
+                record
+                for record in records
+                if record["user_id"] == user_id_clean
+            ]
+
+        if parsed_date_from:
+            records = [
+                record
+                for record in records
+                if record["fecha"]
+                and datetime.strptime(record["fecha"], "%Y-%m-%d").date()
+                >= parsed_date_from
+            ]
+
+        if parsed_date_to:
+            records = [
+                record
+                for record in records
+                if record["fecha"]
+                and datetime.strptime(record["fecha"], "%Y-%m-%d").date()
+                <= parsed_date_to
+            ]
+
+        records = sorted(
+            records,
+            key=lambda item: item["timestamp"] or "",
+            reverse=True,
+        )
+
+        limited_records = records[:limit]
+
+        sync_run_id = f"ZK-SYNC-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{uuid4().hex[:8]}"
+
+        result = insertar_marcaciones_crudas(
+            db=db,
+            records=limited_records,
+            sync_run_id=sync_run_id,
+            dispositivo_ip=os.getenv("ZK_IP"),
+            dispositivo_origen="ZKTeco",
+        )
+
+        return {
+            "ok": True,
+            "message": "Sincronización de marcaciones crudas completada.",
+            "sync_run_id": sync_run_id,
+            "filters": {
+                "limit": limit,
+                "user_id": user_id,
+                "date_from": date_from,
+                "date_to": date_to,
+            },
+            "result": result,
+        }
+
+    except ValueError as exc:
+        db.rollback()
+
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "ok": False,
+                "message": "Formato de fecha inválido. Usa YYYY-MM-DD.",
+                "error": str(exc),
+            },
+        ) from exc
+
+    except Exception as exc:
+        db.rollback()
+
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "ok": False,
+                "message": "No se pudieron sincronizar marcaciones del reloj ZKTeco.",
+                "error": str(exc),
+            },
+        ) from exc
+    
+@router.get("/attendance/db")
+def list_zk_attendance_from_db(
+    db: Annotated[Session, Depends(get_db)],
+    limit: Annotated[int, Query(ge=1, le=5000)] = 100,
+    user_id: Annotated[
+        str | None,
+        Query(description="Filtrar por User ID ZKTeco"),
+    ] = None,
+    date_from: Annotated[
+        str | None,
+        Query(description="Fecha inicial YYYY-MM-DD"),
+    ] = None,
+    date_to: Annotated[
+        str | None,
+        Query(description="Fecha final YYYY-MM-DD"),
+    ] = None,
+):
+    """
+    Lista marcaciones crudas ya sincronizadas en PostgreSQL.
+    """
+    try:
+        if date_from:
+            datetime.strptime(date_from, "%Y-%m-%d").date()
+
+        if date_to:
+            datetime.strptime(date_to, "%Y-%m-%d").date()
+
+        result = listar_marcaciones_crudas_db(
+            db=db,
+            limit=limit,
+            zk_user_id=user_id,
+            date_from=date_from,
+            date_to=date_to,
+        )
+
+        return {
+            "ok": True,
+            "filters": {
+                "limit": limit,
+                "user_id": user_id,
+                "date_from": date_from,
+                "date_to": date_to,
+            },
+            **result,
+        }
+
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "ok": False,
+                "message": "Formato de fecha inválido. Usa YYYY-MM-DD.",
+                "error": str(exc),
+            },
+        ) from exc
+
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "ok": False,
+                "message": "No se pudieron consultar marcaciones crudas desde PostgreSQL.",
+                "error": str(exc),
+            },
+        ) from exc
+    
+@router.post("/time/sync")
+def sync_zk_time(force: bool = False):
+    """
+    Revisa y corrige la hora del reloj ZKTeco.
+
+    Por defecto respeta el límite diario configurado.
+    Si force=true, fuerza la revisión.
+    """
+    return sync_zk_time_if_allowed(force=force)

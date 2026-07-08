@@ -26,7 +26,7 @@ import {
   MODULES,
 } from "../../constants/permissions";
 
-import { currentUser } from "../../data/currentUser";
+import { useAuth } from "../../context/AuthContext";
 import { mockAttendanceSummary } from "../../data/mockAttendance";
 import { getModuleAccess } from "../../utils/permissions";
 
@@ -268,11 +268,17 @@ function mapEmployeeDetailFromApi(
       .join(" ") ??
     "Empleado sin nombre";
 
-  return {
-    id: employeeData?.id ?? null,
+    return {
+      id: employeeData?.id ?? null,
 
-    employeeCode:
-      employeeData?.codigo_empleado ?? "",
+      departmentId:
+        unidadOrganizacional?.id ??
+        employeeData?.unidad_organizacional_id ??
+        employeeData?.departamento_id ??
+        null,
+
+      employeeCode:
+        employeeData?.codigo_empleado ?? "",
 
     fullName,
 
@@ -326,7 +332,21 @@ function mapEmployeeDetailFromApi(
   };
 }
 function EmployeeDetailPage() {
+  const { user } = useAuth();
   const { employeeId } = useParams();
+
+  const currentEmployeeId =
+    user?.employeeId ??
+    user?.empleadoId ??
+    user?.raw?.empleado_id ??
+    null;
+
+  const currentDepartmentId =
+    user?.departmentId ??
+    user?.departamentoId ??
+    user?.raw?.department_id ??
+    user?.raw?.departamento_id ??
+    null;
 
   const [employee, setEmployee] = useState(null);
   const [isLoadingEmployee, setIsLoadingEmployee] =
@@ -387,7 +407,7 @@ function EmployeeDetailPage() {
   }, [employeeId]);
 
   const employeeAccess = getModuleAccess(
-    currentUser.role,
+    user?.role,
     MODULES.EMPLEADOS,
   );
 
@@ -460,12 +480,12 @@ function EmployeeDetailPage() {
     (
       employeeAccess === ACCESS_LEVELS.AREA &&
       Number(employee.departmentId) ===
-        Number(currentUser.departmentId)
+        Number(currentDepartmentId)
     ) ||
     (
       employeeAccess === ACCESS_LEVELS.PROPIO &&
       Number(employee.id) ===
-        Number(currentUser.employeeId)
+        Number(currentEmployeeId)
     );
 
   if (!canViewEmployee) {

@@ -1,26 +1,45 @@
-import { Navigate } from "react-router-dom";
+import { Navigate, useLocation } from "react-router-dom";
 
-import {
-  ACCESS_LEVELS,
-} from "../constants/permissions";
-
-import { currentUser } from "../data/currentUser";
+import { ACCESS_LEVELS } from "../constants/permissions";
+import { useAuth } from "../context/AuthContext";
 import { getModuleAccess } from "../utils/permissions";
 
 /**
  * Protege una ruta según:
  *
- * 1. El rol del usuario actual.
- * 2. El módulo solicitado.
- * 3. Opcionalmente, los niveles de acceso permitidos.
+ * 1. Si hay sesión real.
+ * 2. El rol del usuario autenticado.
+ * 3. El módulo solicitado.
+ * 4. Opcionalmente, los niveles de acceso permitidos.
  */
 function ProtectedRoute({
   requiredModule,
   allowedAccessLevels,
   children,
 }) {
+  const location = useLocation();
+  const { user, loading, isAuthenticated } = useAuth();
+
+  if (loading) {
+    return (
+      <div className="page-stack">
+        <p>Cargando sesión...</p>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated || !user) {
+    return (
+      <Navigate
+        to="/login"
+        replace
+        state={{ from: location }}
+      />
+    );
+  }
+
   const accessLevel = getModuleAccess(
-    currentUser.role,
+    user.role,
     requiredModule,
   );
 

@@ -18,7 +18,7 @@ import {
   MODULES,
 } from "../../constants/permissions";
 
-import { currentUser } from "../../data/currentUser";
+import { useAuth } from "../../context/AuthContext";
 import { mockAttendanceSummary } from "../../data/mockAttendance";
 import { getModuleAccess } from "../../utils/permissions";
 
@@ -50,10 +50,23 @@ function normalizeText(value) {
 }
 
 function AttendancePage() {
+  const { user } = useAuth();
   const [searchTerm, setSearchTerm] = useState("");
 
+  const currentEmployeeId =
+    user?.employeeId ??
+    user?.empleadoId ??
+    user?.raw?.empleado_id ??
+    null;
+
+  const currentDepartmentId =
+    user?.departmentId ??
+    user?.departamentoId ??
+    user?.raw?.department_id ??
+    user?.raw?.departamento_id ??
+    null;
   const attendanceAccess = getModuleAccess(
-    currentUser.role,
+    user?.role,
     MODULES.ASISTENCIA,
   );
 
@@ -75,16 +88,16 @@ function AttendancePage() {
       }
 
       if (attendanceAccess === ACCESS_LEVELS.AREA) {
-        return Number(row.departmentId) === Number(currentUser.departmentId);
+        return Number(row.departmentId) === Number(currentDepartmentId);
       }
 
       if (attendanceAccess === ACCESS_LEVELS.PROPIO) {
-        return Number(row.employeeId) === Number(currentUser.employeeId);
+        return Number(row.employeeId) === Number(currentEmployeeId);
       }
 
       return false;
     });
-  }, [attendanceAccess]);
+  }, [attendanceAccess, currentDepartmentId, currentEmployeeId]);
 
   /**
    * Segundo filtro: búsqueda del usuario.
