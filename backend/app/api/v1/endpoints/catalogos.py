@@ -26,11 +26,14 @@ from app.schemas.catalogos import (
     TipoTurnoCatalogoItem,
     UnidadOrganizacionalCatalogoItem,
 )
-
+from app.core.auth_dependencies import get_current_user
 
 router = APIRouter(
     prefix="/catalogos",
     tags=["Catálogos"],
+    dependencies=[
+        Depends(get_current_user),
+    ],
 )
 
 

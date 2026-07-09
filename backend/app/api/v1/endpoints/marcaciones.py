@@ -7,11 +7,14 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.repositories.marcaciones_repo import listar_marcaciones
 from app.schemas.marcaciones import MarcacionesListadoResponse
-
+from app.core.auth_dependencies import require_roles
 
 router = APIRouter(
     prefix="/marcaciones",
     tags=["Marcaciones"],
+    dependencies=[
+        Depends(require_roles("super_admin", "rh_admin")),
+    ],
 )
 
 

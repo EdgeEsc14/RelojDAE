@@ -10,11 +10,14 @@ from app.repositories.debug_repo import (
     listar_tablas_sistema,
     obtener_resumen_tablas_clave,
 )
-
+from app.core.auth_dependencies import require_roles
 
 router = APIRouter(
     prefix="/debug",
     tags=["Debug"],
+    dependencies=[
+        Depends(require_roles("super_admin")),
+    ],
 )
 
 

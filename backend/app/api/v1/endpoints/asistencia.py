@@ -13,11 +13,14 @@ from app.schemas.asistencia import (
     AsistenciaDiariaListadoResponse,
     AsistenciaEmpleadoResumenResponse,
 )
-
+from app.core.auth_dependencies import get_current_user
 
 router = APIRouter(
     prefix="/asistencia",
     tags=["Asistencia"],
+    dependencies=[
+        Depends(get_current_user),
+    ],
 )
 
 

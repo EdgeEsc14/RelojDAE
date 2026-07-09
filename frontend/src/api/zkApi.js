@@ -1,12 +1,15 @@
+import { getStoredToken } from "./authApi";
+
 const ZK_API_BASE_URL =
   import.meta.env.VITE_ZK_API_BASE_URL || "http://127.0.0.1:8000/api";
 
 async function request(endpoint, options = {}) {
-  const url = `${ZK_API_BASE_URL}${endpoint}`;
+  const token = getStoredToken();
 
-  const response = await fetch(url, {
+  const response = await fetch(`${ZK_API_BASE_URL}${endpoint}`, {
     headers: {
       "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...(options.headers || {}),
     },
     ...options,

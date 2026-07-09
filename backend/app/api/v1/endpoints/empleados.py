@@ -26,11 +26,14 @@ from app.schemas.empleados_write import (
     EmpleadoUpdate,
     SiguienteCodigoEmpleadoResponse,
 )
-
+from app.core.auth_dependencies import get_current_user, require_roles
 
 router = APIRouter(
     prefix="/empleados",
     tags=["Empleados"],
+    dependencies=[
+        Depends(get_current_user),
+    ],
 )
 
 
@@ -57,7 +60,11 @@ def get_empleados(
 )
 def get_siguiente_codigo_empleado(
     db: Annotated[Session, Depends(get_db)],
-    prefijo: Annotated[str, Query(min_length=2, max_length=10)] = "EMP",
+    _current_user: Annotated[
+        dict,
+        Depends(require_roles("super_admin", "rh_admin")),
+    ] = None,
+    prefijo: Annotated[str, Query(min_length=2, max_length=10)] = "DAE",
 ) -> dict:
     try:
         return generar_siguiente_codigo_empleado(
@@ -80,6 +87,10 @@ def get_siguiente_codigo_empleado(
 def post_empleado(
     payload: EmpleadoCreate,
     db: Annotated[Session, Depends(get_db)],
+    _current_user: Annotated[
+        dict,
+        Depends(require_roles("super_admin", "rh_admin")),
+    ] = None,
 ) -> dict:
     try:
         return crear_empleado(
@@ -118,6 +129,10 @@ def put_empleado(
     codigo_empleado: str,
     payload: EmpleadoUpdate,
     db: Annotated[Session, Depends(get_db)],
+    _current_user: Annotated[
+        dict,
+        Depends(require_roles("super_admin", "rh_admin")),
+    ] = None,
 ) -> dict:
     try:
         empleado = actualizar_empleado(
@@ -146,6 +161,10 @@ def patch_estatus_empleado(
     codigo_empleado: str,
     payload: EmpleadoEstatusUpdate,
     db: Annotated[Session, Depends(get_db)],
+    _current_user: Annotated[
+        dict,
+        Depends(require_roles("super_admin", "rh_admin")),
+    ] = None,
 ) -> dict:
     try:
         empleado = actualizar_estatus_empleado(

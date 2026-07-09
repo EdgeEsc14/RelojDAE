@@ -17,11 +17,14 @@ from app.schemas.empleados_config import (
     DispositivoEmpleadoResponse,
     UsuarioSistemaEmpleadoResponse,
 )
-
+from app.core.auth_dependencies import require_roles
 
 router = APIRouter(
     prefix="/empleados",
     tags=["Empleados - Configuración"],
+    dependencies=[
+        Depends(require_roles("super_admin", "rh_admin")),
+    ],
 )
 
 

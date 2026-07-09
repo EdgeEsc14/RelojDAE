@@ -1,4 +1,6 @@
-﻿const API_BASE_URL =
+﻿import { getStoredToken } from "./authApi";
+
+const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:8000/api/v1";
 
 /**
@@ -7,18 +9,21 @@
  * Centralizamos aquí:
  * - URL base del backend
  * - headers JSON
+ * - token Authorization
  * - parseo de respuestas
  * - manejo de errores HTTP
  */
 export async function apiRequest(path, options = {}) {
   const url = `${API_BASE_URL}${path}`;
+  const token = getStoredToken();
 
   const config = {
+    ...options,
     headers: {
       "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...(options.headers ?? {}),
     },
-    ...options,
   };
 
   const response = await fetch(url, config);
@@ -36,6 +41,7 @@ export async function apiRequest(path, options = {}) {
 
   if (!response.ok) {
     const message =
+      data?.detail?.message ??
       data?.detail ??
       data?.message ??
       `Error HTTP ${response.status} al consumir ${path}`;
@@ -47,4 +53,5 @@ export async function apiRequest(path, options = {}) {
 
   return data;
 }
+
 export const apiClient = apiRequest;

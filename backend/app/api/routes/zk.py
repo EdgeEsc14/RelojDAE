@@ -3,9 +3,10 @@ from datetime import datetime
 from typing import Annotated
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
+from app.core.auth_dependencies import require_roles
 from app.core.database import get_db
 from app.repositories.zk_attendance_repo import (
     insertar_marcaciones_crudas,
@@ -19,9 +20,14 @@ from app.repositories.zk_reconciliation_repo import conciliar_empleados_con_usua
 from app.schemas.zk import ZkEmployeeLinkRequest
 from app.services.zk_service import ZKDeviceService
 from app.services.zk_time_sync_service import sync_zk_time_if_allowed
+
+
 router = APIRouter(
     prefix="/zk",
     tags=["ZKTeco"],
+    dependencies=[
+        Depends(require_roles("super_admin", "rh_admin")),
+    ],
 )
 
 
