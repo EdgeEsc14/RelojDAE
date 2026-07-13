@@ -4,11 +4,10 @@ import base64
 import hashlib
 import hmac
 import json
-import os
 import secrets
 import time
 from typing import Any
-
+from app.core.config import get_settings
 
 PASSWORD_ALGORITHM = "pbkdf2_sha256"
 PASSWORD_ITERATIONS = 390000
@@ -80,22 +79,18 @@ def generate_random_password(length: int = 16) -> str:
 
 
 def _get_auth_secret_key() -> str:
-    secret_key = os.getenv("AUTH_SECRET_KEY")
+    """
+    Obtiene la clave utilizada para firmar y validar los tokens.
 
-    if secret_key:
-        return secret_key
-
-    return "dev-secret-key-change-me"
+    """
+    return get_settings().AUTH_SECRET_KEY
 
 
 def _get_token_minutes() -> int:
-    value = os.getenv("AUTH_ACCESS_TOKEN_MINUTES", "480")
-
-    try:
-        return int(value)
-    except ValueError:
-        return 480
-
+    """
+    Obtiene la duración configurada para el token de acceso.
+    """
+    return get_settings().AUTH_ACCESS_TOKEN_MINUTES
 
 def _b64url_encode(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).rstrip(b"=").decode("utf-8")

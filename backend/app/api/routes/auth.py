@@ -160,29 +160,38 @@ def login(
             )
 
         if user["estatus"] != "ACTIVO":
-            resultado = user["estatus"]
+            estatus_usuario = str(
+                user.get("estatus") or ""
+            ).strip().upper()
 
-            if resultado not in {
+            resultados_controlados = {
                 "PENDIENTE_VERIFICACION",
                 "PENDIENTE_APROBACION",
-                "USUARIO_INACTIVO",
+                "INACTIVO",
+                "RECHAZADO",
                 "BLOQUEADO",
-            }:
-                resultado = "USUARIO_INACTIVO"
+            }
+
+            resultado = (
+                estatus_usuario
+                if estatus_usuario in resultados_controlados
+                else "INACTIVO"
+            )
 
             registrar_login_auditoria(
                 db=db,
                 usuario_id=user["id"],
                 correo_intentado=correo,
                 resultado=resultado,
-                motivo=f"USUARIO_{user['estatus']}",
+                motivo=f"USUARIO_{estatus_usuario or 'SIN_ESTATUS'}",
                 **context,
             )
+
             db.commit()
 
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Usuario no activo. Estatus: {user['estatus']}.",
+                detail="El usuario no se encuentra activo.",
             )
 
         if not verify_password(payload.password, user["password_hash"]):
