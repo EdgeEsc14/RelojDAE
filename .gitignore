@@ -44,3 +44,6 @@ Thumbs.db
 # Temporales
 *.tmp
 *.bak
+
+backend/.env
+backend/runtime/

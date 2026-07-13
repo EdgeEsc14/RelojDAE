@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import {
   AlertTriangle,
@@ -19,7 +19,7 @@ import {
 } from "../../constants/permissions";
 
 import { useAuth } from "../../context/AuthContext";
-import { mockAttendanceSummary } from "../../data/mockAttendance";
+import { asistenciaApi } from "../../api/asistenciaApi";
 import { getModuleAccess } from "../../utils/permissions";
 
 function getStatusClass(status) {
@@ -48,11 +48,153 @@ function normalizeText(value) {
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "");
 }
+function getTodayDateInputValue() {
+  return new Date().toISOString().slice(0, 10);
+}
+function formatDate(value) {
+  if (!value) return "";
 
+  try {
+    return new Intl.DateTimeFormat("es-MX", {
+      dateStyle: "medium",
+    }).format(new Date(`${value}T00:00:00`));
+  } catch {
+    return String(value);
+  }
+}
+
+function getDayName(value) {
+  if (!value) return "";
+
+  try {
+    return new Intl.DateTimeFormat("es-MX", {
+      weekday: "long",
+    }).format(new Date(`${value}T00:00:00`));
+  } catch {
+    return "";
+  }
+}
+
+function formatTime(value) {
+  if (!value) return "";
+
+  return String(value).slice(11, 16) !== ""
+    ? String(value).slice(11, 16)
+    : String(value).slice(0, 5);
+}
+
+function formatMinutesAsDuration(minutes) {
+  const safeMinutes = Number(minutes ?? 0);
+
+  const hours = Math.floor(safeMinutes / 60);
+  const remainingMinutes = safeMinutes % 60;
+
+  if (hours === 0) {
+    return `${remainingMinutes} min`;
+  }
+
+  if (remainingMinutes === 0) {
+    return `${hours} h`;
+  }
+
+  return `${hours} h ${remainingMinutes} min`;
+}
+
+function formatAttendanceStatus(status) {
+  const normalized = String(status ?? "")
+    .trim()
+    .toUpperCase();
+
+  if (normalized === "COMPLETO") return "Completo";
+  if (normalized === "RETARDO_MENOR") return "Retardo menor";
+  if (normalized === "RETARDO_MAYOR") return "Retardo mayor";
+  if (normalized === "FALTA") return "Falta";
+  if (normalized === "OMISION_ENTRADA") return "Omisión de entrada";
+  if (normalized === "OMISION_SALIDA") return "Omisión de salida";
+
+  return status || "Sin procesar";
+}
+
+function getItemsFromApiResponse(response) {
+  return (
+    response?.items ??
+    response?.data ??
+    response?.resultados ??
+    []
+  );
+}
+
+function mapAttendanceRowFromApi(row) {
+  return {
+    id: row.id,
+
+    employeeId: row.empleado_id,
+    employeeCode: row.codigo_empleado,
+    employeeName:
+      row.nombre_completo ??
+      row.empleado_nombre ??
+      "Empleado sin nombre",
+
+    departmentId: row.unidad_organizacional_id,
+    department:
+      row.unidad_organizacional_nombre ??
+      row.unidad_nombre ??
+      "Sin área",
+
+    date: formatDate(row.fecha),
+    rawDate: row.fecha,
+    day: getDayName(row.fecha),
+
+    expectedSchedule: `${formatTime(row.entrada_programada) || "—"} - ${
+      formatTime(row.salida_programada) || "—"
+    }`,
+
+    entryTime: formatTime(row.primera_entrada),
+    exitTime: formatTime(row.ultima_salida),
+
+    lateMinutes: Number(row.minutos_retardo ?? 0),
+    ordinaryTime: formatMinutesAsDuration(row.minutos_ordinarios),
+    extraTime: formatMinutesAsDuration(row.minutos_extra),
+
+    status: formatAttendanceStatus(row.estatus),
+
+    incident: row.requiere_revision
+      ? row.observaciones || "Requiere revisión"
+      : "Sin incidencia",
+
+    incidentStatus: row.requiere_revision
+      ? "Pendiente"
+      : "No aplica",
+
+    source: "Procesada",
+    points: Number(row.puntos_generados ?? 0),
+    raw: row,
+  };
+}
 function AttendancePage() {
   const { user } = useAuth();
   const [searchTerm, setSearchTerm] = useState("");
+  const [attendanceDate, setAttendanceDate] = useState(
+    getTodayDateInputValue(),
+  );
 
+  const [attendanceRecords, setAttendanceRecords] = useState([]);
+  const [isLoadingAttendance, setIsLoadingAttendance] = useState(false);
+  const [attendanceError, setAttendanceError] = useState("");
+  const [reloadAttendanceToken, setReloadAttendanceToken] = useState(0);
+  const [processStartDate, setProcessStartDate] = useState(
+    getTodayDateInputValue(),
+  );
+
+  const [processEndDate, setProcessEndDate] = useState(
+    getTodayDateInputValue(),
+  );
+
+  const [isProcessingAttendance, setIsProcessingAttendance] =
+    useState(false);
+
+  const [processResult, setProcessResult] = useState(null);
+  const [processError, setProcessError] = useState("");
   const currentEmployeeId =
     user?.employeeId ??
     user?.empleadoId ??
@@ -65,6 +207,53 @@ function AttendancePage() {
     user?.raw?.department_id ??
     user?.raw?.departamento_id ??
     null;
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadAttendanceRecords() {
+      try {
+        setIsLoadingAttendance(true);
+        setAttendanceError("");
+
+        const response = await asistenciaApi.listarDiaria({
+          fecha: attendanceDate,
+          limit: 100,
+          offset: 0,
+        });
+
+        if (!isMounted) return;
+
+        const records = getItemsFromApiResponse(response).map(
+          mapAttendanceRowFromApi,
+        );
+
+        setAttendanceRecords(records);
+      } catch (error) {
+        if (!isMounted) return;
+
+        setAttendanceRecords([]);
+        setAttendanceError(
+          error.message ||
+            "No fue posible cargar la asistencia procesada.",
+        );
+      } finally {
+        if (isMounted) {
+          setIsLoadingAttendance(false);
+        }
+      }
+    }
+
+    loadAttendanceRecords();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [attendanceDate, reloadAttendanceToken]);
+
+
+
+
   const attendanceAccess = getModuleAccess(
     user?.role,
     MODULES.ASISTENCIA,
@@ -79,7 +268,7 @@ function AttendancePage() {
    * PROPIO  -> solamente su employeeId.
    */
   const scopedAttendanceRecords = useMemo(() => {
-    return mockAttendanceSummary.filter((row) => {
+    return attendanceRecords.filter((row) => {
       if (
         attendanceAccess === ACCESS_LEVELS.TOTAL ||
         attendanceAccess === ACCESS_LEVELS.LECTURA
@@ -97,7 +286,12 @@ function AttendancePage() {
 
       return false;
     });
-  }, [attendanceAccess, currentDepartmentId, currentEmployeeId]);
+  }, [
+    attendanceAccess,
+    attendanceRecords,
+    currentDepartmentId,
+    currentEmployeeId,
+  ]);
 
   /**
    * Segundo filtro: búsqueda del usuario.
@@ -158,7 +352,46 @@ function AttendancePage() {
    */
   const canReprocessPeriod =
     attendanceAccess === ACCESS_LEVELS.TOTAL;
+  async function handleProcessAttendance(event) {
+    event.preventDefault();
 
+    if (!processStartDate || !processEndDate) {
+      setProcessError("Selecciona fecha inicio y fecha fin.");
+      setProcessResult(null);
+      return;
+    }
+
+    if (processStartDate > processEndDate) {
+      setProcessError(
+        "La fecha inicio no puede ser mayor que la fecha fin.",
+      );
+      setProcessResult(null);
+      return;
+    }
+
+    try {
+      setIsProcessingAttendance(true);
+      setProcessError("");
+      setProcessResult(null);
+
+      const response = await asistenciaApi.procesar({
+        fechaInicio: processStartDate,
+        fechaFin: processEndDate,
+      });
+
+      setProcessResult(response);
+      setAttendanceDate(processEndDate);
+      setReloadAttendanceToken((currentValue) => currentValue + 1);
+    } catch (error) {
+      setProcessError(
+        error.message ||
+          "No fue posible procesar la asistencia.",
+      );
+      setProcessResult(null);
+    } finally {
+      setIsProcessingAttendance(false);
+    }
+  }
   return (
     <div className="page-stack">
       <PageHeader
@@ -229,9 +462,107 @@ function AttendancePage() {
           </div>
         </article>
       </section>
+      {canReprocessPeriod && (
+        <section className="panel-card form-card">
+          <div className="form-section-header">
+            <div>
+              <h3>Procesar asistencia</h3>
+              <p>
+                Genera asistencias diarias a partir de las marcaciones
+                crudas sincronizadas del reloj.
+              </p>
+            </div>
+          </div>
 
+          <form onSubmit={handleProcessAttendance} noValidate>
+            <div className="form-grid two-columns">
+              <div className="form-field">
+                <label htmlFor="processStartDate">
+                  Fecha inicio
+                </label>
+
+                <input
+                  id="processStartDate"
+                  type="date"
+                  value={processStartDate}
+                  onChange={(event) =>
+                    setProcessStartDate(event.target.value)
+                  }
+                />
+              </div>
+
+              <div className="form-field">
+                <label htmlFor="processEndDate">
+                  Fecha fin
+                </label>
+
+                <input
+                  id="processEndDate"
+                  type="date"
+                  value={processEndDate}
+                  onChange={(event) =>
+                    setProcessEndDate(event.target.value)
+                  }
+                />
+              </div>
+            </div>
+
+            {processError && (
+              <div className="form-alert error" role="alert">
+                <AlertTriangle size={22} />
+
+                <div>
+                  <strong>No se pudo procesar</strong>
+                  <p>{processError}</p>
+                </div>
+              </div>
+            )}
+
+            {processResult && (
+              <div className="form-alert success" role="status">
+                <CheckCircle2 size={22} />
+
+                <div>
+                  <strong>Asistencia procesada</strong>
+                  <p>
+                    Registros encontrados:{" "}
+                    {processResult.registros_encontrados} ·
+                    Procesadas: {processResult.procesadas} ·
+                    Errores: {processResult.errores?.length ?? 0}
+                  </p>
+                </div>
+              </div>
+            )}
+
+            <div className="form-actions">
+              <button
+                className="primary-button"
+                type="submit"
+                disabled={isProcessingAttendance}
+              >
+                <TimerReset size={17} />
+                {isProcessingAttendance
+                  ? "Procesando..."
+                  : "Procesar asistencia"}
+              </button>
+            </div>
+          </form>
+        </section>
+      )}
       <section className="panel-card">
         <div className="filters-row">
+          <div className="form-field compact-field">
+            <label htmlFor="attendanceDate">Fecha</label>
+
+            <input
+              id="attendanceDate"
+              type="date"
+              value={attendanceDate}
+              onChange={(event) =>
+                setAttendanceDate(event.target.value)
+              }
+            />
+          </div>
           <div className="filter-search">
             <Search size={18} />
 
@@ -249,12 +580,30 @@ function AttendancePage() {
           </button>
         </div>
 
-        {visibleAttendanceRecords.length === 0 ? (
+        {attendanceError ? (
           <div className="empty-state">
-            <h3>No se encontraron registros</h3>
+            <AlertTriangle size={42} />
+
+            <h3>No se pudo cargar la asistencia</h3>
+
+            <p>{attendanceError}</p>
+          </div>
+        ) : isLoadingAttendance ? (
+          <div className="empty-state">
+            <Clock size={42} />
+
+            <h3>Cargando asistencia</h3>
+
+            <p>Consultando registros procesados del backend.</p>
+          </div>
+        ) : visibleAttendanceRecords.length === 0 ? (
+          <div className="empty-state">
+            <CalendarDays size={42} />
+
+            <h3>Sin registros de asistencia</h3>
+
             <p>
-              No existen registros de asistencia disponibles para el usuario
-              actual o para la búsqueda realizada.
+              No hay asistencia procesada para la fecha seleccionada.
             </p>
           </div>
         ) : (

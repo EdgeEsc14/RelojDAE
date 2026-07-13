@@ -21,13 +21,14 @@ import {
 import PageHeader from "../../components/layout/PageHeader";
 import { empleadosApi } from "../../api/empleadosApi";
 import { catalogosApi } from "../../api/catalogosApi";
+import { asistenciaApi } from "../../api/asistenciaApi";
 import {
   ACCESS_LEVELS,
   MODULES,
 } from "../../constants/permissions";
 
 import { useAuth } from "../../context/AuthContext";
-import { mockAttendanceSummary } from "../../data/mockAttendance";
+/**import { mockAttendanceSummary } from "../../data/mockAttendance";**/
 import { getModuleAccess } from "../../utils/permissions";
 
 /**
@@ -84,6 +85,114 @@ function formatDuration(totalSeconds) {
     String(seconds).padStart(2, "0"),
   ].join(":");
 }
+
+function formatDate(value) {
+  if (!value) return "";
+
+  try {
+    return new Intl.DateTimeFormat("es-MX", {
+      dateStyle: "medium",
+    }).format(new Date(`${value}T00:00:00`));
+  } catch {
+    return String(value);
+  }
+}
+
+function getDayName(value) {
+  if (!value) return "";
+
+  try {
+    return new Intl.DateTimeFormat("es-MX", {
+      weekday: "long",
+    }).format(new Date(`${value}T00:00:00`));
+  } catch {
+    return "";
+  }
+}
+
+function formatTime(value) {
+  if (!value) return "";
+
+  return String(value).slice(0, 5);
+}
+
+function formatMinutesAsDuration(minutes) {
+  return formatDuration(Number(minutes ?? 0) * 60);
+}
+
+function formatAttendanceStatus(status) {
+  const normalized = String(status ?? "")
+    .trim()
+    .toUpperCase();
+
+  if (normalized === "COMPLETO" || normalized === "COMPLETA") {
+    return "Completo";
+  }
+
+  if (normalized === "COMPLETO_TIEMPO_EXTRA") {
+    return "Completo con tiempo extra";
+  }
+
+  if (
+    normalized === "RETARDO" ||
+    normalized === "RETARDO_MENOR" ||
+    normalized === "RETARDO_MAYOR"
+  ) {
+    return "Retardo";
+  }
+
+  if (normalized === "FALTA") {
+    return "Falta";
+  }
+
+  if (normalized === "OMISION_ENTRADA") {
+    return "Omisión de entrada";
+  }
+
+  if (normalized === "OMISION_SALIDA") {
+    return "Omisión de salida";
+  }
+
+  return status || "Sin evaluar";
+}
+
+function mapAttendanceRowsFromApi(asistenciaSummary) {
+  const rows = asistenciaSummary?.asistencias_recientes ?? [];
+
+  return rows.map((row) => ({
+    id: row.id,
+    date: formatDate(row.fecha),
+    rawDate: row.fecha,
+    day: getDayName(row.fecha),
+    expectedSchedule: `${formatTime(row.entrada_programada) || "—"} - ${
+      formatTime(row.salida_programada) || "—"
+    }`,
+    entryTime: formatTime(row.primera_entrada),
+    exitTime: formatTime(row.ultima_salida),
+    lateMinutes: Number(row.minutos_retardo ?? 0),
+    ordinaryTime: formatMinutesAsDuration(row.minutos_ordinarios),
+    extraTime: formatMinutesAsDuration(row.minutos_extra),
+    status: formatAttendanceStatus(row.estatus),
+    points: Number(row.puntos_generados ?? 0),
+    requiresReview: Boolean(row.requiere_revision),
+    observations: row.observaciones,
+  }));
+}
+
+function mapIncidentsFromApi(asistenciaSummary) {
+  const rows = asistenciaSummary?.incidencias_recientes ?? [];
+
+  return rows.map((row) => ({
+    id: row.id,
+    date: formatDate(row.fecha),
+    incident: row.tipo_nombre ?? row.tipo_codigo ?? "Incidencia",
+    description: row.descripcion ?? "Sin descripción",
+    incidentStatus: row.estatus ?? "Sin estatus",
+    points: Number(row.puntos_efectivos ?? 0),
+    requiresReview: Boolean(row.requiere_revision),
+  }));
+}
+
 
 function getStatusClass(status) {
   if (status === "Completo") {
@@ -349,6 +458,7 @@ function EmployeeDetailPage() {
     null;
 
   const [employee, setEmployee] = useState(null);
+  const [attendanceSummary, setAttendanceSummary] = useState(null);
   const [isLoadingEmployee, setIsLoadingEmployee] =
     useState(false);  
   const [employeeError, setEmployeeError] = useState("");
@@ -364,9 +474,11 @@ function EmployeeDetailPage() {
         const [
           employeeProfile,
           organizationalUnitsResponse,
+          attendanceSummaryResponse,
         ] = await Promise.all([
           empleadosApi.obtenerPerfil(employeeId),
           catalogosApi.listarUnidadesOrganizacionales(),
+          asistenciaApi.obtenerResumenEmpleado(employeeId).catch(() => null),
         ]);
 
         if (!isMounted) return;
@@ -382,10 +494,12 @@ function EmployeeDetailPage() {
             organizationalUnits,
           ),
         );
+        setAttendanceSummary(attendanceSummaryResponse);
       } catch (error) {
         if (!isMounted) return;
 
         setEmployee(null);
+        setAttendanceSummary(null);
         setEmployeeError(
           error.message ||
             "No fue posible cargar el empleado desde el backend.",
@@ -520,52 +634,52 @@ function EmployeeDetailPage() {
     );
   }
 
-  /**
-   * Filtra la asistencia usando la llave interna employeeId.
-   */
-  const employeeAttendance = mockAttendanceSummary.filter(
-    (row) =>
-      Number(row.employeeId) === Number(employee.id),
-  );
+  const employeeAttendance =
+    mapAttendanceRowsFromApi(attendanceSummary);
 
-  /**
-   * Una incidencia es cualquier registro distinto de "No".
-   */
-  const employeeIncidents = employeeAttendance.filter(
-    (row) =>
-      row.incident &&
-      row.incident !== "No",
-  );
+  const employeeIncidents =
+    mapIncidentsFromApi(attendanceSummary);
 
-  const completeDays = employeeAttendance.filter(
-    (row) => row.status.includes("Completo"),
-  ).length;
+  const resumenPeriodo =
+    attendanceSummary?.resumen_periodo ?? null;
 
-  const lateDays = employeeAttendance.filter(
-    (row) => row.status === "Retardo",
-  ).length;
+  const completeDays =
+    resumenPeriodo?.dias_completos ??
+    employeeAttendance.filter((row) =>
+      row.status.includes("Completo"),
+    ).length;
 
-  const absenceDays = employeeAttendance.filter(
-    (row) => row.status === "Falta",
-  ).length;
+  const lateDays =
+    Number(resumenPeriodo?.retardos_menores ?? 0) +
+    Number(resumenPeriodo?.retardos_mayores ?? 0);
 
-  const ordinarySeconds = employeeAttendance.reduce(
-    (total, row) =>
-      total + durationToSeconds(row.ordinaryTime),
-    0,
-  );
-
-  const extraSeconds = employeeAttendance.reduce(
-    (total, row) =>
-      total + durationToSeconds(row.extraTime),
-    0,
-  );
+  const absenceDays =
+    resumenPeriodo?.faltas ??
+    employeeAttendance.filter(
+      (row) => row.status === "Falta",
+    ).length;
 
   const totalOrdinaryTime =
-    formatDuration(ordinarySeconds);
+    resumenPeriodo?.minutos_ordinarios != null
+      ? formatMinutesAsDuration(resumenPeriodo.minutos_ordinarios)
+      : formatDuration(
+          employeeAttendance.reduce(
+            (total, row) =>
+              total + durationToSeconds(row.ordinaryTime),
+            0,
+          ),
+        );
 
   const totalExtraTime =
-    formatDuration(extraSeconds);
+    resumenPeriodo?.minutos_extra != null
+      ? formatMinutesAsDuration(resumenPeriodo.minutos_extra)
+      : formatDuration(
+          employeeAttendance.reduce(
+            (total, row) =>
+              total + durationToSeconds(row.extraTime),
+            0,
+          ),
+        );
 
   /**
    * Solo los usuarios con acceso total podrán modificar

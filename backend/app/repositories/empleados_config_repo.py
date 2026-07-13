@@ -28,20 +28,40 @@ def asignar_horario_empleado(
 
     try:
         if payload.cerrar_asignaciones_activas:
+            # Si existe una asignación activa que empieza el mismo día o después
+            # de la nueva asignación, se elimina porque queda totalmente reemplazada.
+            db.execute(
+                text(
+                    """
+                    DELETE FROM asistencia.asignaciones_horario
+                    WHERE empleado_id = :empleado_id
+                    AND estatus = 'ACTIVA'
+                    AND fecha_inicio >= CAST(:fecha_inicio AS date)
+                    """
+                ),
+                {
+                    "empleado_id": empleado["id"],
+                    "fecha_inicio": payload.fecha_inicio,
+                },
+            )
+
+            # Si existe una asignación activa anterior a la nueva fecha,
+            # solo se cierra con fecha_fin. No cambiamos estatus porque
+            # la restricción actual no acepta INACTIVA.
             db.execute(
                 text(
                     """
                     UPDATE asistencia.asignaciones_horario
                     SET
-                        estatus = 'INACTIVA',
-                        fecha_fin = CASE
-                            WHEN fecha_fin IS NULL OR fecha_fin >= :fecha_inicio
-                                THEN CAST(:fecha_inicio AS date) - 1
-                            ELSE fecha_fin
-                        END,
+                        fecha_fin = CAST(:fecha_inicio AS date) - 1,
                         fecha_modificacion = CURRENT_TIMESTAMP
                     WHERE empleado_id = :empleado_id
-                      AND estatus = 'ACTIVA'
+                    AND estatus = 'ACTIVA'
+                    AND fecha_inicio < CAST(:fecha_inicio AS date)
+                    AND (
+                            fecha_fin IS NULL
+                            OR fecha_fin >= CAST(:fecha_inicio AS date)
+                    )
                     """
                 ),
                 {

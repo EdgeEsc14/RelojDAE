@@ -156,10 +156,38 @@ function buildEmployeeCreatePayload(
     estatus: toBackendEmployeeStatus(form.status),
   };
 }
+
+function buildEmployeeUpdatePayload(form) {
+  const unidadOrganizacionalId = Number(
+    form.departmentId || form.mainUnitId,
+  );
+
+  return {
+    nombres: form.firstNames.trim(),
+    apellido_paterno: form.paternalSurname.trim(),
+    apellido_materno: form.maternalSurname.trim() || null,
+
+    rfc: form.rfc.trim() || null,
+    correo: form.email.trim() || null,
+
+    unidad_organizacional_id: unidadOrganizacionalId,
+    puesto_id: Number(form.positionId),
+
+    supervisor_id:
+      form.supervisorId === "none"
+        ? null
+        : Number(form.supervisorId),
+
+    fecha_ingreso: form.fechaIngreso || null,
+    estatus: toBackendEmployeeStatus(form.status),
+  };
+}
+
+
 function buildEmployeeSchedulePayload(form) {
   return {
     horario_id: Number(form.scheduleId),
-    fecha_inicio: form.fechaIngreso,
+    fecha_inicio: getTodayDateInputValue(),
     fecha_fin: null,
     motivo: "Asignación inicial desde alta de empleado",
     cerrar_asignaciones_activas: true,
@@ -1114,9 +1142,80 @@ function EmployeeForm({
 
     try {
       if (isEditMode) {
-        throw new Error(
-          "AUNNNN TENGO PENDIENTE ESTOOOOOOO",
-        );
+        const employeeCode =
+          initialEmployee?.employeeCode ??
+          initialEmployee?.codigo_empleado ??
+          form.employeeCode;
+
+        const updatePayload =
+          buildEmployeeUpdatePayload(form);
+
+        const updatedEmployee =
+          await empleadosApi.actualizar(
+            employeeCode,
+            updatePayload,
+          );
+
+        const savedEmployeeFromApi =
+          mapSavedEmployeeFromApi(
+            updatedEmployee,
+            form,
+          );
+
+        const scheduleChanged =
+          String(initialEmployee?.scheduleId ?? "") !==
+          String(form.scheduleId ?? "");
+
+        if (scheduleChanged && form.scheduleId) {
+          await empleadosApi.asignarHorario(
+            employeeCode,
+            {
+              horario_id: Number(form.scheduleId),
+              fecha_inicio:
+                form.fechaIngreso ||
+                getTodayDateInputValue(),
+              fecha_fin: null,
+              motivo:
+                "Cambio de horario desde edición de empleado",
+              cerrar_asignaciones_activas: true,
+            },
+          );
+        }
+
+        const initialZkUserId = String(
+          initialEmployee?.zkUserId ?? "",
+        ).trim();
+
+        const nextZkUserId = String(
+          form.zkUserId ?? "",
+        ).trim();
+
+        const zkUserChanged =
+          initialZkUserId !== nextZkUserId;
+
+        if (zkUserChanged && nextZkUserId) {
+          const devicePayload =
+            buildEmployeeDevicePayload(
+              form,
+              savedEmployeeFromApi,
+            );
+
+          await empleadosApi.asignarDispositivo(
+            employeeCode,
+            devicePayload,
+          );
+        }
+
+        setSavedEmployee({
+          ...savedEmployeeFromApi,
+          employeeCode,
+        });
+
+        setTimeout(() => {
+          navigate(`/employees/${employeeCode}`);
+        }, 900);
+
+        return;
       }
 
       const createPayload = buildEmployeeCreatePayload(
@@ -1740,17 +1839,18 @@ function EmployeeForm({
                   ))}
                 </select>
 
-                <button
-                  className="secondary-button compact-button"
-                  type="button"
-                  disabled
-                  onClick={openScheduleModal}
+                <Link
+                  className="secondary-button compact-button link-button"
+                  to="/schedules"
+                  title="Ir al módulo de horarios"
                 >
                   <Plus size={16} />
-                  Nuevo horario
-                </button>
+                  Administrar horarios
+                </Link>
               </div>
-
+              <span className="field-help">
+                Selecciona un horario existente. La creación y edición de horarios se hace desde el módulo Horarios.
+              </span>
               {errors.scheduleId && (
                 <span className="field-error">
                   {errors.scheduleId}

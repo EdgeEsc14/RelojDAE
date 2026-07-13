@@ -14,7 +14,11 @@ from app.schemas.asistencia import (
     AsistenciaEmpleadoResumenResponse,
 )
 from app.core.auth_dependencies import get_current_user
-
+from app.repositories.asistencia_procesamiento_repo import procesar_asistencia_diaria
+from app.schemas.asistencia_procesamiento import (
+    ProcesarAsistenciaRequest,
+    ProcesarAsistenciaResponse,
+)
 router = APIRouter(
     prefix="/asistencia",
     tags=["Asistencia"],
@@ -70,3 +74,17 @@ def get_resumen_asistencia_empleado(
         )
 
     return resumen
+
+@router.post(
+    "/procesar",
+    response_model=ProcesarAsistenciaResponse,
+)
+def post_procesar_asistencia(
+    payload: ProcesarAsistenciaRequest,
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    return procesar_asistencia_diaria(
+        db=db,
+        fecha_inicio=payload.fecha_inicio,
+        fecha_fin=payload.fecha_fin,
+    )
