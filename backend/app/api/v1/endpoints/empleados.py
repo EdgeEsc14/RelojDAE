@@ -1,8 +1,16 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Query,
+    status,
+)
 from sqlalchemy.orm import Session
 
+from app.core.access_control import AccessScope
+from app.core.auth_dependencies import require_module_access
 from app.core.database import get_db
 from app.repositories.empleados_repo import (
     listar_empleados,
@@ -26,27 +34,60 @@ from app.schemas.empleados_write import (
     EmpleadoUpdate,
     SiguienteCodigoEmpleadoResponse,
 )
-from app.core.auth_dependencies import get_current_user, require_roles
+
 
 router = APIRouter(
     prefix="/empleados",
     tags=["Empleados"],
-    dependencies=[
-        Depends(get_current_user),
-    ],
 )
 
 
-@router.get("", response_model=EmpleadosListadoResponse)
+@router.get(
+    "",
+    response_model=EmpleadosListadoResponse,
+)
 def get_empleados(
-    db: Annotated[Session, Depends(get_db)],
-    q: Annotated[str | None, Query(description="Búsqueda por código, nombre o correo")] = None,
-    estatus: Annotated[str | None, Query(description="Filtro por estatus del empleado")] = None,
-    limit: Annotated[int, Query(ge=1, le=100)] = 20,
-    offset: Annotated[int, Query(ge=0)] = 0,
+    db: Annotated[
+        Session,
+        Depends(get_db),
+    ],
+    access_scope: Annotated[
+        AccessScope,
+        Depends(
+            require_module_access(
+                "EMPLEADOS",
+                "consultar",
+            )
+        ),
+    ],
+    q: Annotated[
+        str | None,
+        Query(
+            description=(
+                "Búsqueda por código, nombre o correo"
+            )
+        ),
+    ] = None,
+    estatus: Annotated[
+        str | None,
+        Query(
+            description=(
+                "Filtro por estatus del empleado"
+            )
+        ),
+    ] = None,
+    limit: Annotated[
+        int,
+        Query(ge=1, le=100),
+    ] = 20,
+    offset: Annotated[
+        int,
+        Query(ge=0),
+    ] = 0,
 ) -> dict:
     return listar_empleados(
         db=db,
+        access_scope=access_scope,
         q=q,
         estatus=estatus,
         limit=limit,
@@ -59,19 +100,29 @@ def get_empleados(
     response_model=SiguienteCodigoEmpleadoResponse,
 )
 def get_siguiente_codigo_empleado(
-    db: Annotated[Session, Depends(get_db)],
-    _current_user: Annotated[
-        dict,
-        Depends(require_roles("super_admin", "rh_admin")),
-    ] = None,
-    prefijo: Annotated[str, Query(min_length=2, max_length=10)] = "DAE",
+    db: Annotated[
+        Session,
+        Depends(get_db),
+    ],
+    _access_scope: Annotated[
+        AccessScope,
+        Depends(
+            require_module_access(
+                "EMPLEADOS",
+                "crear",
+            )
+        ),
+    ],
+    prefijo: Annotated[
+        str,
+        Query(min_length=2, max_length=10),
+    ] = "DAE",
 ) -> dict:
     try:
         return generar_siguiente_codigo_empleado(
             db=db,
             prefijo=prefijo,
         )
-
     except ValueError as exc:
         raise HTTPException(
             status_code=400,
@@ -86,18 +137,25 @@ def get_siguiente_codigo_empleado(
 )
 def post_empleado(
     payload: EmpleadoCreate,
-    db: Annotated[Session, Depends(get_db)],
-    _current_user: Annotated[
-        dict,
-        Depends(require_roles("super_admin", "rh_admin")),
-    ] = None,
+    db: Annotated[
+        Session,
+        Depends(get_db),
+    ],
+    _access_scope: Annotated[
+        AccessScope,
+        Depends(
+            require_module_access(
+                "EMPLEADOS",
+                "crear",
+            )
+        ),
+    ],
 ) -> dict:
     try:
         return crear_empleado(
             db=db,
             payload=payload,
         )
-
     except ValueError as exc:
         raise HTTPException(
             status_code=400,
@@ -105,34 +163,64 @@ def post_empleado(
         ) from exc
 
 
-@router.get("/{codigo_empleado}/perfil", response_model=EmpleadoPerfilResponse)
+@router.get(
+    "/{codigo_empleado}/perfil",
+    response_model=EmpleadoPerfilResponse,
+)
 def get_perfil_empleado_por_codigo(
     codigo_empleado: str,
-    db: Annotated[Session, Depends(get_db)],
+    db: Annotated[
+        Session,
+        Depends(get_db),
+    ],
+    access_scope: Annotated[
+        AccessScope,
+        Depends(
+            require_module_access(
+                "EMPLEADOS",
+                "consultar",
+            )
+        ),
+    ],
 ) -> dict:
     perfil = obtener_perfil_empleado_por_codigo(
         db=db,
         codigo_empleado=codigo_empleado,
+        access_scope=access_scope,
     )
 
     if perfil is None:
         raise HTTPException(
             status_code=404,
-            detail=f"No existe empleado con código {codigo_empleado}",
+            detail=(
+                "No existe el empleado solicitado "
+                "o no tienes permiso para consultarlo."
+            ),
         )
 
     return perfil
 
 
-@router.put("/{codigo_empleado}", response_model=EmpleadoResumen)
+@router.put(
+    "/{codigo_empleado}",
+    response_model=EmpleadoResumen,
+)
 def put_empleado(
     codigo_empleado: str,
     payload: EmpleadoUpdate,
-    db: Annotated[Session, Depends(get_db)],
-    _current_user: Annotated[
-        dict,
-        Depends(require_roles("super_admin", "rh_admin")),
-    ] = None,
+    db: Annotated[
+        Session,
+        Depends(get_db),
+    ],
+    _access_scope: Annotated[
+        AccessScope,
+        Depends(
+            require_module_access(
+                "EMPLEADOS",
+                "editar",
+            )
+        ),
+    ],
 ) -> dict:
     try:
         empleado = actualizar_empleado(
@@ -140,7 +228,6 @@ def put_empleado(
             codigo_empleado=codigo_empleado,
             payload=payload,
         )
-
     except ValueError as exc:
         raise HTTPException(
             status_code=400,
@@ -150,21 +237,35 @@ def put_empleado(
     if empleado is None:
         raise HTTPException(
             status_code=404,
-            detail=f"No existe empleado con código {codigo_empleado}",
+            detail=(
+                f"No existe empleado con código "
+                f"{codigo_empleado}"
+            ),
         )
 
     return empleado
 
 
-@router.patch("/{codigo_empleado}/estatus", response_model=EmpleadoResumen)
+@router.patch(
+    "/{codigo_empleado}/estatus",
+    response_model=EmpleadoResumen,
+)
 def patch_estatus_empleado(
     codigo_empleado: str,
     payload: EmpleadoEstatusUpdate,
-    db: Annotated[Session, Depends(get_db)],
-    _current_user: Annotated[
-        dict,
-        Depends(require_roles("super_admin", "rh_admin")),
-    ] = None,
+    db: Annotated[
+        Session,
+        Depends(get_db),
+    ],
+    _access_scope: Annotated[
+        AccessScope,
+        Depends(
+            require_module_access(
+                "EMPLEADOS",
+                "editar",
+            )
+        ),
+    ],
 ) -> dict:
     try:
         empleado = actualizar_estatus_empleado(
@@ -172,7 +273,6 @@ def patch_estatus_empleado(
             codigo_empleado=codigo_empleado,
             estatus=payload.estatus,
         )
-
     except ValueError as exc:
         raise HTTPException(
             status_code=400,
@@ -182,26 +282,48 @@ def patch_estatus_empleado(
     if empleado is None:
         raise HTTPException(
             status_code=404,
-            detail=f"No existe empleado con código {codigo_empleado}",
+            detail=(
+                f"No existe empleado con código "
+                f"{codigo_empleado}"
+            ),
         )
 
     return empleado
 
 
-@router.get("/{codigo_empleado}", response_model=EmpleadoResumen)
+@router.get(
+    "/{codigo_empleado}",
+    response_model=EmpleadoResumen,
+)
 def get_empleado_por_codigo(
     codigo_empleado: str,
-    db: Annotated[Session, Depends(get_db)],
+    db: Annotated[
+        Session,
+        Depends(get_db),
+    ],
+    access_scope: Annotated[
+        AccessScope,
+        Depends(
+            require_module_access(
+                "EMPLEADOS",
+                "consultar",
+            )
+        ),
+    ],
 ) -> dict:
     empleado = obtener_empleado_por_codigo(
         db=db,
         codigo_empleado=codigo_empleado,
+        access_scope=access_scope,
     )
 
     if empleado is None:
         raise HTTPException(
             status_code=404,
-            detail=f"No existe empleado con código {codigo_empleado}",
+            detail=(
+                "No existe el empleado solicitado "
+                "o no tienes permiso para consultarlo."
+            ),
         )
 
     return empleado

@@ -1,18 +1,58 @@
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.core.access_control import AccessScope
+
+ACCESS_SCOPE_SQL = """
+(
+    :access_data_scope = 'TOTAL'
+
+    OR (
+        :access_data_scope = 'PROPIO'
+        AND e.id = :access_employee_id
+    )
+
+    OR (
+        :access_data_scope = 'AREA'
+        AND e.unidad_organizacional_id = ANY(
+            CAST(:access_unit_ids AS BIGINT[])
+        )
+    )
+)
+"""
+
+
+def _get_access_params(
+    access_scope: AccessScope,
+) -> dict:
+    return {
+        "access_data_scope": (
+            access_scope.data_scope
+        ),
+        "access_employee_id": (
+            access_scope.employee_id
+        ),
+        "access_unit_ids": list(
+            access_scope.allowed_unit_ids
+        ),
+    }
 
 def listar_empleados(
     db: Session,
+    access_scope: AccessScope,
     q: str | None = None,
     estatus: str | None = None,
     limit: int = 20,
     offset: int = 0,
 ) -> dict:
-    where_conditions: list[str] = []
+    where_conditions: list[str] = [
+        ACCESS_SCOPE_SQL,
+    ]
+
     params: dict = {
         "limit": limit,
         "offset": offset,
+        **_get_access_params(access_scope),
     }
 
     if q:
@@ -174,47 +214,62 @@ def listar_empleados(
 def obtener_empleado_por_codigo(
     db: Session,
     codigo_empleado: str,
+    access_scope: AccessScope,
 ) -> dict | None:
     query = text(
-        """
+        f"""
         SELECT
-            id,
-            codigo_empleado,
-            nombres,
-            apellido_paterno,
-            apellido_materno,
+            e.id,
+            e.codigo_empleado,
+            e.nombres,
+            e.apellido_paterno,
+            e.apellido_materno,
             NULLIF(
-                TRIM(CONCAT_WS(' ', apellido_paterno, apellido_materno)),
+                TRIM(
+                    CONCAT_WS(
+                        ' ',
+                        e.apellido_paterno,
+                        e.apellido_materno
+                    )
+                ),
                 ''
             ) AS apellidos,
-            nombre_completo,
-            correo,
-            estatus
-        FROM personal.empleados
-        WHERE codigo_empleado = :codigo_empleado
+            e.nombre_completo,
+            e.correo,
+            e.estatus
+        FROM personal.empleados e
+        WHERE e.codigo_empleado = :codigo_empleado
+          AND {ACCESS_SCOPE_SQL}
         LIMIT 1
         """
     )
 
+    params = {
+        "codigo_empleado": codigo_empleado,
+        **_get_access_params(access_scope),
+    }
+
     row = db.execute(
         query,
-        {
-            "codigo_empleado": codigo_empleado,
-        },
+        params,
     ).mappings().first()
 
     if row is None:
         return None
 
     return dict(row)
-
-
 def obtener_perfil_empleado_por_codigo(
     db: Session,
     codigo_empleado: str,
+    access_scope: AccessScope,
 ) -> dict | None:
+    params = {
+        "codigo_empleado": codigo_empleado,
+        **_get_access_params(access_scope),
+    }
+
     query = text(
-        """
+        f"""
         SELECT
             e.id AS empleado_id,
             e.codigo_empleado,
@@ -372,15 +427,14 @@ def obtener_perfil_empleado_por_codigo(
         ) dz ON TRUE
 
         WHERE e.codigo_empleado = :codigo_empleado
+            AND {ACCESS_SCOPE_SQL}
         LIMIT 1
         """
     )
 
     row = db.execute(
         query,
-        {
-            "codigo_empleado": codigo_empleado,
-        },
+        params,
     ).mappings().first()
 
     if row is None:
