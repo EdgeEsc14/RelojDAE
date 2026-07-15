@@ -242,3 +242,58 @@ def build_access_scope(
         ),
         allowed_unit_ids=allowed_unit_ids,
     )
+def get_allowed_employee_ids(
+    *,
+    db: Session,
+    access_scope: AccessScope,
+) -> tuple[int, ...]:
+    """
+    Devuelve los empleados visibles para un alcance efectivo.
+
+    TOTAL:
+        Todos los empleados.
+
+    AREA:
+        Empleados de las unidades autorizadas.
+
+    PROPIO:
+        Únicamente el empleado vinculado al usuario.
+
+    NINGUNO:
+        Ningún empleado.
+    """
+
+    query = text(
+        """
+        SELECT e.id
+        FROM personal.empleados e
+        WHERE
+            :access_data_scope = 'TOTAL'
+
+            OR (
+                :access_data_scope = 'PROPIO'
+                AND e.id = :access_employee_id
+            )
+
+            OR (
+                :access_data_scope = 'AREA'
+                AND e.unidad_organizacional_id = ANY(
+                    CAST(:access_unit_ids AS BIGINT[])
+                )
+            )
+        ORDER BY e.id
+        """
+    )
+
+    rows = db.execute(
+        query,
+        {
+            "access_data_scope": access_scope.data_scope,
+            "access_employee_id": access_scope.employee_id,
+            "access_unit_ids": list(
+                access_scope.allowed_unit_ids
+            ),
+        },
+    ).scalars().all()
+
+    return tuple(int(employee_id) for employee_id in rows)

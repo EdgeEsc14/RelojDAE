@@ -36,6 +36,35 @@ class DashboardUltimaMarcacion(BaseModel):
     dispositivo_origen: str | None = None
     dispositivo_ip: str | None = None
 
+
+class DashboardAsistenciaHoyResumen(BaseModel):
+    total: int
+    completos: int
+    retardos_menores: int
+    retardos_mayores: int
+    faltas: int
+    requieren_revision: int
+    puntos_generados: int
+
+
+class DashboardAlertasResumen(BaseModel):
+    empleados_sin_zk: int
+    empleados_sin_horario: int
+    marcaciones_sin_empleado_hoy: int
+    asistencias_revision_hoy: int
+    faltas_hoy: int
+    retardos_mayores_hoy: int
+
+
+class DashboardAsistenciaDiaSerie(BaseModel):
+    fecha: str
+    total: int
+    completos: int
+    retardos: int
+    faltas: int
+    requieren_revision: int
+
+
 class DashboardTopEmpleadoFaltas(BaseModel):
     empleado_id: int
     codigo_empleado: str | None = None
@@ -54,42 +83,7 @@ class DashboardTopEmpleadoRetardos(BaseModel):
     total_retardos: int
     puntos_generados: int
     dias_procesados: int
-class DashboardResumenResponse(BaseModel):
-    empleados: DashboardEmpleadosResumen
-    marcaciones: DashboardMarcacionesResumen
-    dispositivos: DashboardDispositivosResumen
-    ultimas_marcaciones: list[DashboardUltimaMarcacion]
-    asistencia_hoy: DashboardAsistenciaHoyResumen
-    alertas: DashboardAlertasResumen
-    asistencia_ultimos_dias: list[DashboardAsistenciaDiaSerie]
-    top_empleados_faltas: list[DashboardTopEmpleadoFaltas]
-    top_empleados_retardos: list[DashboardTopEmpleadoRetardos]
-    departamentos_incidencias: list[DashboardDepartamentoIncidencias]
 
-class DashboardAsistenciaHoyResumen(BaseModel):
-    total: int
-    completos: int
-    retardos_menores: int
-    retardos_mayores: int
-    faltas: int
-    requieren_revision: int
-    puntos_generados: int
-
-class DashboardAlertasResumen(BaseModel):
-    empleados_sin_zk: int
-    empleados_sin_horario: int
-    marcaciones_sin_empleado_hoy: int
-    asistencias_revision_hoy: int
-    faltas_hoy: int
-    retardos_mayores_hoy: int
-
-class DashboardAsistenciaDiaSerie(BaseModel):
-    fecha: str
-    total: int
-    completos: int
-    retardos: int
-    faltas: int
-    requieren_revision: int
 
 class DashboardDepartamentoIncidencias(BaseModel):
     unidad_organizacional_id: int | None = None
@@ -102,3 +96,18 @@ class DashboardDepartamentoIncidencias(BaseModel):
     requieren_revision: int
     total_incidencias: int
     empleados_involucrados: int
+
+
+class DashboardResumenResponse(BaseModel):
+    empleados: DashboardEmpleadosResumen
+    marcaciones: DashboardMarcacionesResumen
+    dispositivos: DashboardDispositivosResumen
+    ultimas_marcaciones: list[DashboardUltimaMarcacion]
+    asistencia_hoy: DashboardAsistenciaHoyResumen
+    alertas: DashboardAlertasResumen
+    asistencia_ultimos_dias: list[DashboardAsistenciaDiaSerie]
+    top_empleados_faltas: list[DashboardTopEmpleadoFaltas]
+    top_empleados_retardos: list[DashboardTopEmpleadoRetardos]
+    departamentos_incidencias: list[
+        DashboardDepartamentoIncidencias
+    ]
