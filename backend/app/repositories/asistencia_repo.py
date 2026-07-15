@@ -1,13 +1,51 @@
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.core.access_control import AccessScope
+
+ACCESS_SCOPE_SQL = """
+(
+    :access_data_scope = 'TOTAL'
+
+    OR (
+        :access_data_scope = 'PROPIO'
+        AND e.id = :access_employee_id
+    )
+
+    OR (
+        :access_data_scope = 'AREA'
+        AND e.unidad_organizacional_id = ANY(
+            CAST(:access_unit_ids AS BIGINT[])
+        )
+    )
+)
+"""
+
+
+def _get_access_params(
+    access_scope: AccessScope,
+) -> dict:
+    return {
+        "access_data_scope": access_scope.data_scope,
+        "access_employee_id": access_scope.employee_id,
+        "access_unit_ids": list(
+            access_scope.allowed_unit_ids
+        ),
+    }
+
+
 
 def obtener_resumen_asistencia_empleado(
     db: Session,
     codigo_empleado: str,
+    access_scope: AccessScope,
     limite: int = 10,
 ) -> dict | None:
-    empleado = _obtener_empleado(db, codigo_empleado)
+    empleado = _obtener_empleado(
+        db=db,
+        codigo_empleado=codigo_empleado,
+        access_scope=access_scope,
+    )
 
     if empleado is None:
         return None
@@ -41,13 +79,14 @@ def obtener_resumen_asistencia_empleado(
             limite=limite,
         )
 
-        movimientos_puntos_recientes = _obtener_movimientos_puntos_recientes(
-            db=db,
-            empleado_id=empleado["id"],
-            periodo_id=periodo_actual["id"],
-            limite=limite,
+        movimientos_puntos_recientes = (
+            _obtener_movimientos_puntos_recientes(
+                db=db,
+                empleado_id=empleado["id"],
+                periodo_id=periodo_actual["id"],
+                limite=limite,
+            )
         )
-
     else:
         asistencias_recientes = _obtener_asistencias_recientes(
             db=db,
@@ -64,11 +103,13 @@ def obtener_resumen_asistencia_empleado(
             limite=limite,
         )
 
-        movimientos_puntos_recientes = _obtener_movimientos_puntos_recientes(
-            db=db,
-            empleado_id=empleado["id"],
-            periodo_id=None,
-            limite=limite,
+        movimientos_puntos_recientes = (
+            _obtener_movimientos_puntos_recientes(
+                db=db,
+                empleado_id=empleado["id"],
+                periodo_id=None,
+                limite=limite,
+            )
         )
 
     return {
@@ -77,33 +118,40 @@ def obtener_resumen_asistencia_empleado(
         "resumen_periodo": resumen_periodo,
         "asistencias_recientes": asistencias_recientes,
         "incidencias_recientes": incidencias_recientes,
-        "movimientos_puntos_recientes": movimientos_puntos_recientes,
+        "movimientos_puntos_recientes": (
+            movimientos_puntos_recientes
+        ),
     }
 
 
 def _obtener_empleado(
     db: Session,
     codigo_empleado: str,
+    access_scope: AccessScope,
 ) -> dict | None:
     query = text(
-        """
+        f"""
         SELECT
-            id,
-            codigo_empleado,
-            nombre_completo,
-            correo,
-            estatus
-        FROM personal.empleados
-        WHERE codigo_empleado = :codigo_empleado
+            e.id,
+            e.codigo_empleado,
+            e.nombre_completo,
+            e.correo,
+            e.estatus
+        FROM personal.empleados e
+        WHERE e.codigo_empleado = :codigo_empleado
+          AND {ACCESS_SCOPE_SQL}
         LIMIT 1
         """
     )
 
+    params = {
+        "codigo_empleado": codigo_empleado,
+        **_get_access_params(access_scope),
+    }
+
     row = db.execute(
         query,
-        {
-            "codigo_empleado": codigo_empleado,
-        },
+        params,
     ).mappings().first()
 
     if row is None:
@@ -348,6 +396,7 @@ def _obtener_movimientos_puntos_recientes(
 def listar_asistencia_diaria(
     db: Session,
     fecha,
+    access_scope: AccessScope,
     q: str | None = None,
     estatus: str | None = None,
     unidad_organizacional_id: int | None = None,
@@ -355,13 +404,15 @@ def listar_asistencia_diaria(
     offset: int = 0,
 ) -> dict:
     filtros = [
-        "ad.fecha = :fecha"
+        "ad.fecha = :fecha",
+        ACCESS_SCOPE_SQL,
     ]
 
     params: dict = {
         "fecha": fecha,
         "limit": limit,
         "offset": offset,
+        **_get_access_params(access_scope),
     }
 
     if q:
