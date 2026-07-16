@@ -12,6 +12,9 @@ from sqlalchemy.orm import Session
 from app.core.access_control import AccessScope
 from app.core.auth_dependencies import require_module_access
 from app.core.database import get_db
+from app.repositories.empleados_integral_repo import (
+    crear_alta_integral_empleado,
+)
 from app.repositories.empleados_repo import (
     listar_empleados,
     obtener_empleado_por_codigo,
@@ -28,6 +31,10 @@ from app.schemas.empleados import (
     EmpleadoResumen,
     EmpleadosListadoResponse,
 )
+from app.schemas.empleados_integral import (
+    AltaIntegralEmpleadoRequest,
+    AltaIntegralEmpleadoResponse,
+)
 from app.schemas.empleados_write import (
     EmpleadoCreate,
     EmpleadoEstatusUpdate,
@@ -40,6 +47,43 @@ router = APIRouter(
     prefix="/empleados",
     tags=["Empleados"],
 )
+
+
+@router.post(
+    "/alta-integral",
+    response_model=AltaIntegralEmpleadoResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def post_alta_integral_empleado(
+    payload: AltaIntegralEmpleadoRequest,
+    db: Annotated[
+        Session,
+        Depends(get_db),
+    ],
+    access_scope: Annotated[
+        AccessScope,
+        Depends(
+            require_module_access(
+                "EMPLEADOS",
+                "crear",
+            )
+        ),
+    ],
+) -> dict:
+    try:
+        return crear_alta_integral_empleado(
+            db=db,
+            payload=payload,
+            solicitado_por_usuario_id=(
+                access_scope.user_id
+            ),
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
 
 
 @router.get(
