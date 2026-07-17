@@ -25,6 +25,12 @@ class PuestoCatalogoItem(BaseModel):
     nivel_jerarquico: int
     activo: bool
 
+class TipoContratacionCatalogoItem(BaseModel):
+    id: int
+    codigo: str
+    nombre: str
+    descripcion: str | None = None
+    activo: bool
 
 class TipoTurnoCatalogoItem(BaseModel):
     id: int
@@ -114,3 +120,4 @@ class CatalogosTodosResponse(BaseModel):
     roles: list[RolCatalogoItem]
     tipos_marcacion: list[TipoMarcacionCatalogoItem]
     tipos_incidencia: list[TipoIncidenciaCatalogoItem]
+    tipos_contratacion: list[TipoContratacionCatalogoItem]    

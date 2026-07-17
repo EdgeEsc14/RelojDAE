@@ -1,4 +1,4 @@
-import {
+﻿import {
   useEffect,
   useMemo,
   useState,
@@ -25,10 +25,10 @@ import {
 const WEEK_DAYS = [
   "Lunes",
   "Martes",
-  "Miércoles",
+  "MiÃ©rcoles",
   "Jueves",
   "Viernes",
-  "Sábado",
+  "SÃ¡bado",
   "Domingo",
 ];
 
@@ -135,8 +135,8 @@ function buildEmployeeCreatePayload(
       : Number(form.mainUnitId),
 
     /*
-     * Temporalmente usamos el único puesto real existente
-     * en catálogo:
+     * Temporalmente usamos el Ãºnico puesto real existente
+     * en catÃ¡logo:
      *
      * id: 2
      * AUXILIAR_ADMINISTRATIVO
@@ -156,61 +156,6 @@ function buildEmployeeCreatePayload(
     estatus: toBackendEmployeeStatus(form.status),
   };
 }
-
-function buildAltaIntegralPayload(form) {
-  return {
-    nombres: form.nombres.trim(),
-
-    apellido_paterno:
-      form.apellidoPaterno.trim(),
-
-    apellido_materno:
-      form.apellidoMaterno?.trim() || null,
-
-    rfc:
-      form.rfc.trim().toUpperCase(),
-
-    curp:
-      form.curp?.trim().toUpperCase() || null,
-
-    telefono:
-      form.telefono?.trim() || null,
-
-    correo_personal:
-      form.correoPersonal.trim().toLowerCase(),
-
-    tipo_contratacion_id:
-      Number(form.tipoContratacionId),
-
-    fecha_ingreso:
-      form.fechaIngreso,
-
-    puesto_id:
-      Number(form.positionId),
-
-    unidad_organizacional_id:
-      Number(form.departmentId),
-
-    supervisor_id:
-      form.supervisorId === "none" ||
-      !form.supervisorId
-        ? null
-        : Number(form.supervisorId),
-
-    horario_id:
-      Number(form.scheduleId),
-
-    observaciones:
-      form.observaciones?.trim() || null,
-
-    registrar_en_reloj: true,
-
-    todos_dispositivos_activos: true,
-
-    dispositivo_ids: [],
-  };
-}
-
 
 function buildEmployeeUpdatePayload(form) {
   const unidadOrganizacionalId = Number(
@@ -244,7 +189,7 @@ function buildEmployeeSchedulePayload(form) {
     horario_id: Number(form.scheduleId),
     fecha_inicio: getTodayDateInputValue(),
     fecha_fin: null,
-    motivo: "Asignación inicial desde alta de empleado",
+    motivo: "AsignaciÃ³n inicial desde alta de empleado",
     cerrar_asignaciones_activas: true,
   };
 }
@@ -306,7 +251,7 @@ function getCatalogArrayFromApiResponse(response) {
 
 function getScheduleOptionLabel(schedule) {
   if (schedule.nombre && schedule.tipo_turno_nombre) {
-    return `${schedule.nombre} · ${schedule.tipo_turno_nombre}`;
+    return `${schedule.nombre} Â· ${schedule.tipo_turno_nombre}`;
   }
 
   if (schedule.nombre) {
@@ -314,7 +259,7 @@ function getScheduleOptionLabel(schedule) {
   }
 
   if (schedule.name) {
-    return `${schedule.name} · ${getScheduleDescription(schedule)}`;
+    return `${schedule.name} Â· ${getScheduleDescription(schedule)}`;
   }
 
   return "Horario sin nombre";
@@ -378,8 +323,8 @@ function getEmployeeNameParts(employee) {
   }
 
   /*
-   * Adaptación temporal para los empleados mock que
-   * todavía solamente tienen fullName.
+   * AdaptaciÃ³n temporal para los empleados mock que
+   * todavÃ­a solamente tienen fullName.
    */
   const nameParts = String(employee.fullName ?? "")
     .trim()
@@ -422,7 +367,7 @@ function validateEmployee(form, editingEmployeeId = null) {
 
   if (!employeeCode) {
     errors.employeeCode =
-      "El código de empleado es obligatorio.";
+      "El cÃ³digo de empleado es obligatorio.";
   } else if (!/^EMP-\d{4,}$/.test(employeeCode)) {
     errors.employeeCode =
       "Utiliza el formato EMP-0001.";
@@ -433,7 +378,7 @@ function validateEmployee(form, editingEmployeeId = null) {
       "El usuario Reloj es obligatorio.";
   } else if (!/^\d+$/.test(zkUserId)) {
     errors.zkUserId =
-      "El usuario Reloj debe contener solo números.";
+      "El usuario Reloj debe contener solo nÃºmeros.";
   } else if (Number(zkUserId) <= 0) {
     errors.zkUserId =
       "El usuario Reloj debe ser mayor que cero.";
@@ -451,10 +396,10 @@ function validateEmployee(form, editingEmployeeId = null) {
 
   if (
     rfc &&
-    !/^[A-ZÑ&]{4}\d{6}[A-Z0-9]{3}$/.test(rfc)
+    !/^[A-ZÃ‘&]{4}\d{6}[A-Z0-9]{3}$/.test(rfc)
   ) {
     errors.rfc =
-      "El RFC debe tener 13 caracteres y un formato válido.";
+      "El RFC debe tener 13 caracteres y un formato vÃ¡lido.";
   }
 
   if (!email) {
@@ -462,7 +407,7 @@ function validateEmployee(form, editingEmployeeId = null) {
       "El correo institucional es obligatorio.";
   } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     errors.email =
-      "Ingresa un correo institucional válido.";
+      "Ingresa un correo institucional vÃ¡lido.";
   }
 
   if (!fechaIngreso) {
@@ -472,7 +417,7 @@ function validateEmployee(form, editingEmployeeId = null) {
 
   if (!form.mainUnitId) {
     errors.mainUnitId =
-      "Selecciona un área principal.";
+      "Selecciona un Ã¡rea principal.";
   }
 
   const selectedMainUnitId = Number(form.mainUnitId);
@@ -491,7 +436,7 @@ function validateEmployee(form, editingEmployeeId = null) {
     !form.departmentId
   ) {
     errors.departmentId =
-      "Selecciona un departamento específico.";
+      "Selecciona un departamento especÃ­fico.";
   }
 
   if (!form.positionId) {
@@ -751,7 +696,7 @@ function EmployeeForm({
 
           setCatalogsError(
             error.message ||
-              "No fue posible cargar los catálogos desde el backend.",
+              "No fue posible cargar los catÃ¡logos desde el backend.",
           );
         } finally {
           if (isMounted) {
@@ -840,7 +785,7 @@ function EmployeeForm({
             employee.area_principal ??
             employee.unidad_organizacional ??
             employee.department ??
-            "Sin área",
+            "Sin Ã¡rea",
           departamento:
             employee.unidad_organizacional ??
             employee.department ??
@@ -1077,7 +1022,7 @@ function EmployeeForm({
 
     if (scheduleForm.days.length === 0) {
       validationErrors.days =
-        "Selecciona al menos un día laboral.";
+        "Selecciona al menos un dÃ­a laboral.";
     }
 
     if (!scheduleForm.startTime) {
@@ -1231,7 +1176,7 @@ function EmployeeForm({
                 getTodayDateInputValue(),
               fecha_fin: null,
               motivo:
-                "Cambio de horario desde edición de empleado",
+                "Cambio de horario desde ediciÃ³n de empleado",
               cerrar_asignaciones_activas: true,
             },
           );
@@ -1273,13 +1218,13 @@ function EmployeeForm({
         return;
       }
 
-      const altaIntegralPayload =
-          buildAltaIntegralPayload(form);
+      const createPayload = buildEmployeeCreatePayload(
+        form,
+        automaticEmployeeCode,
+      );
 
       const createdEmployee =
-          await empleadosApi.crearAltaIntegral(
-              altaIntegralPayload,
-          );
+        await empleadosApi.crear(createPayload);
 
       const savedEmployeeFromApi =
         mapSavedEmployeeFromApi(createdEmployee, form);
@@ -1287,13 +1232,20 @@ function EmployeeForm({
       const schedulePayload =
         buildEmployeeSchedulePayload(form);
 
-
+      await empleadosApi.asignarHorario(
+        savedEmployeeFromApi.employeeCode,
+        schedulePayload,
+      );
 
       const devicePayload = buildEmployeeDevicePayload(
         form,
         savedEmployeeFromApi,
       );
 
+      await empleadosApi.asignarDispositivo(
+        savedEmployeeFromApi.employeeCode,
+        devicePayload,
+      );
 
       setSavedEmployee(savedEmployeeFromApi);
 
@@ -1330,10 +1282,10 @@ function EmployeeForm({
         }
         description={
           isEditMode
-            ? `Actualiza la información de ${
+            ? `Actualiza la informaciÃ³n de ${
                 initialEmployee?.fullName ?? "este empleado"
               }.`
-            : "Registra los datos laborales del empleado y su relación con el reloj checador."
+            : "Registra los datos laborales del empleado y su relaciÃ³n con el reloj checador."
         }
       >
         <Link
@@ -1377,7 +1329,7 @@ function EmployeeForm({
 
           <div>
             <strong>
-              Error al cargar catálogos
+              Error al cargar catÃ¡logos
             </strong>
 
             <p>{catalogsError}</p>
@@ -1394,7 +1346,7 @@ function EmployeeForm({
 
           <div>
             <strong>
-              Revisa la información
+              Revisa la informaciÃ³n
             </strong>
 
             <p>
@@ -1413,7 +1365,7 @@ function EmployeeForm({
         <div className="form-section">
           <div className="form-section-header">
             <div>
-              <h3>Identificación</h3>
+              <h3>IdentificaciÃ³n</h3>
 
               <p>
                 Datos administrativos y registro en el reloj
@@ -1654,10 +1606,10 @@ function EmployeeForm({
                 <div className="form-section">
           <div className="form-section-header">
             <div>
-              <h3>Organización</h3>
+              <h3>OrganizaciÃ³n</h3>
 
               <p>
-                División, puesto, supervisor y horario.
+                DivisiÃ³n, puesto, supervisor y horario.
               </p>
             </div>
           </div>
@@ -1665,7 +1617,7 @@ function EmployeeForm({
           <div className="form-grid">
             <div className="form-field">
               <label htmlFor="mainUnitId">
-                Área principal
+                Ãrea principal
               </label>
 
               <select
@@ -1682,8 +1634,8 @@ function EmployeeForm({
               >
                 <option value="">
                   {isLoadingCatalogs
-                    ? "Cargando áreas..."
-                    : "Selecciona área principal"}
+                    ? "Cargando Ã¡reas..."
+                    : "Selecciona Ã¡rea principal"}
                 </option>
 
                 {mainUnits.map((unit) => (
@@ -1705,7 +1657,7 @@ function EmployeeForm({
 
             <div className="form-field">
               <label htmlFor="departmentId">
-                Departamento específico
+                Departamento especÃ­fico
               </label>
 
               <select
@@ -1726,10 +1678,10 @@ function EmployeeForm({
               >
                 <option value="">
                   {!form.mainUnitId
-                    ? "Primero selecciona área principal"
+                    ? "Primero selecciona Ã¡rea principal"
                     : selectedUnitHasChildren
                       ? "Selecciona departamento"
-                      : "No aplica para esta área"}
+                      : "No aplica para esta Ã¡rea"}
                 </option>
 
                 {childDepartments.map((department) => (
@@ -1744,7 +1696,7 @@ function EmployeeForm({
 
               {!selectedUnitHasChildren && form.mainUnitId && (
                 <span className="field-help">
-                  Esta área se asigna directamente al empleado.
+                  Esta Ã¡rea se asigna directamente al empleado.
                 </span>
               )}
 
@@ -1835,7 +1787,7 @@ function EmployeeForm({
                     key={supervisor.id}
                     value={supervisor.id}
                   >
-                    {supervisor.codigoEmpleado} · {supervisor.nombreCompleto} · {supervisor.puesto}
+                    {supervisor.codigoEmpleado} Â· {supervisor.nombreCompleto} Â· {supervisor.puesto}
                   </option>
                 ))}
               </select>
@@ -1890,14 +1842,14 @@ function EmployeeForm({
                 <Link
                   className="secondary-button compact-button link-button"
                   to="/schedules"
-                  title="Ir al módulo de horarios"
+                  title="Ir al mÃ³dulo de horarios"
                 >
                   <Plus size={16} />
                   Administrar horarios
                 </Link>
               </div>
               <span className="field-help">
-                Selecciona un horario existente. La creación y edición de horarios se hace desde el módulo Horarios.
+                Selecciona un horario existente. La creaciÃ³n y ediciÃ³n de horarios se hace desde el mÃ³dulo Horarios.
               </span>
               {errors.scheduleId && (
                 <span className="field-error">
@@ -1964,8 +1916,8 @@ function EmployeeForm({
                 </h2>
 
                 <p>
-                  Crea una jornada rápida y asígnala
-                  automáticamente al empleado.
+                  Crea una jornada rÃ¡pida y asÃ­gnala
+                  automÃ¡ticamente al empleado.
                 </p>
               </div>
 
@@ -2008,7 +1960,7 @@ function EmployeeForm({
               </div>
 
               <div className="form-field">
-                <label>Días laborales</label>
+                <label>DÃ­as laborales</label>
 
                 <div className="day-selector">
                   {WEEK_DAYS.map((day) => {
@@ -2168,7 +2120,7 @@ function EmployeeForm({
                       <strong>Horario nocturno</strong>
 
                       <p>
-                        La hora de salida corresponde al día
+                        La hora de salida corresponde al dÃ­a
                         siguiente.
                       </p>
                     </div>
