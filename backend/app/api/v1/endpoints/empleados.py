@@ -41,7 +41,13 @@ from app.schemas.empleados_write import (
     EmpleadoUpdate,
     SiguienteCodigoEmpleadoResponse,
 )
-
+from app.schemas.empleados_sincronizacion import (
+    SincronizarRelojesRequest,
+    SincronizarRelojesResponse,
+)
+from app.services.empleados_sincronizacion_service import (
+    sincronizar_empleado_relojes,
+)
 
 router = APIRouter(
     prefix="/empleados",
@@ -83,7 +89,85 @@ def post_alta_integral_empleado(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(exc),
         ) from exc
+@router.post(
+    "/{codigo_empleado}/sincronizar-relojes",
+    response_model=SincronizarRelojesResponse,
+)
+def post_sincronizar_relojes_empleado(
+    codigo_empleado: str,
+    payload: SincronizarRelojesRequest,
+    db: Annotated[
+        Session,
+        Depends(get_db),
+    ],
+    access_scope: Annotated[
+        AccessScope,
+        Depends(
+            require_module_access(
+                "EMPLEADOS",
+                "editar",
+            )
+        ),
+    ],
+) -> dict:
+    try:
+        return sincronizar_empleado_relojes(
+            db=db,
+            codigo_empleado=codigo_empleado,
+            access_scope=access_scope,
+            dispositivo_ids=payload.dispositivo_ids,
+        )
+    except LookupError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
 
+
+@router.post(
+    "/{codigo_empleado}/dispositivos/"
+    "{dispositivo_id}/reintentar",
+    response_model=SincronizarRelojesResponse,
+)
+def post_reintentar_sincronizacion_dispositivo(
+    codigo_empleado: str,
+    dispositivo_id: int,
+    db: Annotated[
+        Session,
+        Depends(get_db),
+    ],
+    access_scope: Annotated[
+        AccessScope,
+        Depends(
+            require_module_access(
+                "EMPLEADOS",
+                "editar",
+            )
+        ),
+    ],
+) -> dict:
+    try:
+        return sincronizar_empleado_relojes(
+            db=db,
+            codigo_empleado=codigo_empleado,
+            access_scope=access_scope,
+            dispositivo_ids=[dispositivo_id],
+        )
+    except LookupError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
 
 
 @router.get(
