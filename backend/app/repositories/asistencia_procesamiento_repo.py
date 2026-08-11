@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from typing import Any
 
 from sqlalchemy import text
@@ -8,7 +8,29 @@ from sqlalchemy.orm import Session
 
 
 def _combinar_fecha_hora(fecha: date, hora: time) -> datetime:
+    """Combina fecha con hora para generar un datetime."""
     return datetime.combine(fecha, hora)
+
+
+def _calcular_salida_programada(
+    fecha: date,
+    hora_entrada: time,
+    hora_salida: time,
+) -> datetime:
+    """
+    Calcula la salida programada considerando cruce de medianoche.
+
+    Si hora_salida < hora_entrada, el turno cruza medianoche y la salida
+    corresponde al día siguiente.
+
+    Ejemplo:
+        entrada 22:00, salida 06:00 → salida = fecha + 1 día a las 06:00
+        entrada 08:00, salida 15:00 → salida = misma fecha a las 15:00
+    """
+    if hora_salida < hora_entrada:
+        return datetime.combine(fecha + timedelta(days=1), hora_salida)
+
+    return datetime.combine(fecha, hora_salida)
 
 
 def _calcular_minutos_retardo(
@@ -142,71 +164,112 @@ def procesar_asistencia_diaria(
     fecha_inicio: date,
     fecha_fin: date,
 ) -> dict[str, Any]:
+    """
+    Procesa asistencia diaria para empleados con marcaciones en el rango.
+
+    Para turnos que cruzan medianoche (hora_salida < hora_entrada), la salida
+    se busca en el día siguiente. La fecha del registro de asistencia corresponde
+    al día de ENTRADA del turno.
+    """
     rows = db.execute(
         text(
             """
-            SELECT
-                mc.empleado_id,
-                mc.codigo_empleado,
-                mc.fecha,
+            WITH horarios_empleado AS (
+                SELECT
+                    mc.empleado_id,
+                    mc.codigo_empleado,
+                    mc.fecha AS fecha_entrada,
 
-                MIN(mc.fecha_hora) FILTER (
-                    WHERE mc.punch = 0
+                    ah.horario_id,
+
+                    h.hora_entrada,
+                    h.hora_salida,
+                    h.tolerancia_entrada_minutos,
+                    h.descanso_minutos,
+                    h.permite_tiempo_extra,
+
+                    tt.duracion_jornada_minutos,
+                    tt.modalidad_tiempo_extra,
+
+                    -- Detectar si el turno cruza medianoche
+                    (h.hora_salida < h.hora_entrada) AS cruza_medianoche
+
+                FROM asistencia.marcaciones_crudas mc
+
+                INNER JOIN asistencia.asignaciones_horario ah
+                    ON ah.empleado_id = mc.empleado_id
+                   AND ah.estatus = 'ACTIVA'
+                   AND ah.fecha_inicio <= mc.fecha
+                   AND (
+                        ah.fecha_fin IS NULL
+                        OR ah.fecha_fin >= mc.fecha
+                   )
+
+                INNER JOIN asistencia.horarios h
+                    ON h.id = ah.horario_id
+                   AND h.activo = true
+
+                INNER JOIN asistencia.tipos_turno tt
+                    ON tt.id = h.tipo_turno_id
+                   AND tt.activo = true
+
+                WHERE mc.fecha BETWEEN :fecha_inicio AND :fecha_fin
+                  AND mc.empleado_id IS NOT NULL
+                  AND mc.punch = 0
+
+                GROUP BY
+                    mc.empleado_id,
+                    mc.codigo_empleado,
+                    mc.fecha,
+                    ah.horario_id,
+                    h.hora_entrada,
+                    h.hora_salida,
+                    h.tolerancia_entrada_minutos,
+                    h.descanso_minutos,
+                    h.permite_tiempo_extra,
+                    tt.duracion_jornada_minutos,
+                    tt.modalidad_tiempo_extra
+            )
+            SELECT
+                he.empleado_id,
+                he.codigo_empleado,
+                he.fecha_entrada AS fecha,
+                he.horario_id,
+                he.hora_entrada,
+                he.hora_salida,
+                he.tolerancia_entrada_minutos,
+                he.descanso_minutos,
+                he.permite_tiempo_extra,
+                he.duracion_jornada_minutos,
+                he.modalidad_tiempo_extra,
+                he.cruza_medianoche,
+
+                -- Primera entrada del día de entrada
+                (
+                    SELECT MIN(m.fecha_hora)
+                    FROM asistencia.marcaciones_crudas m
+                    WHERE m.empleado_id = he.empleado_id
+                      AND m.fecha = he.fecha_entrada
+                      AND m.punch = 0
                 ) AS primera_entrada,
 
-                MAX(mc.fecha_hora) FILTER (
-                    WHERE mc.punch = 1
-                ) AS ultima_salida,
+                -- Última salida: mismo día O día siguiente si cruza medianoche
+                (
+                    SELECT MAX(m.fecha_hora)
+                    FROM asistencia.marcaciones_crudas m
+                    WHERE m.empleado_id = he.empleado_id
+                      AND m.punch = 1
+                      AND (
+                          -- Salida el mismo día
+                          (NOT he.cruza_medianoche AND m.fecha = he.fecha_entrada)
+                          OR
+                          -- Salida el día siguiente (turno nocturno)
+                          (he.cruza_medianoche AND m.fecha IN (he.fecha_entrada, he.fecha_entrada + 1))
+                      )
+                ) AS ultima_salida
 
-                ah.horario_id,
-
-                h.hora_entrada,
-                h.hora_salida,
-                h.tolerancia_entrada_minutos,
-                h.descanso_minutos,
-                h.permite_tiempo_extra,
-
-                tt.duracion_jornada_minutos,
-                tt.modalidad_tiempo_extra
-
-            FROM asistencia.marcaciones_crudas mc
-
-            INNER JOIN asistencia.asignaciones_horario ah
-                ON ah.empleado_id = mc.empleado_id
-               AND ah.estatus = 'ACTIVA'
-               AND ah.fecha_inicio <= mc.fecha
-               AND (
-                    ah.fecha_fin IS NULL
-                    OR ah.fecha_fin >= mc.fecha
-               )
-
-            INNER JOIN asistencia.horarios h
-                ON h.id = ah.horario_id
-               AND h.activo = true
-
-            INNER JOIN asistencia.tipos_turno tt
-                ON tt.id = h.tipo_turno_id
-               AND tt.activo = true
-
-            WHERE mc.fecha BETWEEN :fecha_inicio AND :fecha_fin
-              AND mc.empleado_id IS NOT NULL
-
-            GROUP BY
-                mc.empleado_id,
-                mc.codigo_empleado,
-                mc.fecha,
-                ah.horario_id,
-                h.hora_entrada,
-                h.hora_salida,
-                h.tolerancia_entrada_minutos,
-                h.descanso_minutos,
-                h.permite_tiempo_extra,
-                tt.duracion_jornada_minutos,
-                tt.modalidad_tiempo_extra
-
-            ORDER BY
-                mc.fecha,
-                mc.empleado_id
+            FROM horarios_empleado he
+            ORDER BY he.fecha_entrada, he.empleado_id
             """
         ),
         {
@@ -227,8 +290,9 @@ def procesar_asistencia_diaria(
                 row["hora_entrada"],
             )
 
-            salida_programada = _combinar_fecha_hora(
+            salida_programada = _calcular_salida_programada(
                 fecha,
+                row["hora_entrada"],
                 row["hora_salida"],
             )
 

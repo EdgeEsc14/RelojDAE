@@ -14,7 +14,7 @@ import {
 import PageHeader from "../../components/layout/PageHeader";
 
 import {
-  ACCESS_LEVELS,
+  DATA_SCOPES,
   MODULES,
 } from "../../constants/permissions";
 
@@ -263,24 +263,20 @@ function AttendancePage() {
    * Primer filtro: seguridad y alcance del usuario.
    *
    * TOTAL   -> todos los registros.
-   * LECTURA -> todos, pero sin acciones administrativas.
    * AREA    -> solamente su departamento.
    * PROPIO  -> solamente su employeeId.
    */
   const scopedAttendanceRecords = useMemo(() => {
     return attendanceRecords.filter((row) => {
-      if (
-        attendanceAccess === ACCESS_LEVELS.TOTAL ||
-        attendanceAccess === ACCESS_LEVELS.LECTURA
-      ) {
+      if (attendanceAccess === DATA_SCOPES.TOTAL) {
         return true;
       }
 
-      if (attendanceAccess === ACCESS_LEVELS.AREA) {
+      if (attendanceAccess === DATA_SCOPES.AREA) {
         return Number(row.departmentId) === Number(currentDepartmentId);
       }
 
-      if (attendanceAccess === ACCESS_LEVELS.PROPIO) {
+      if (attendanceAccess === DATA_SCOPES.PROPIO) {
         return Number(row.employeeId) === Number(currentEmployeeId);
       }
 
@@ -351,7 +347,7 @@ function AttendancePage() {
    * - RH/Admin
    */
   const canReprocessPeriod =
-    attendanceAccess === ACCESS_LEVELS.TOTAL;
+    attendanceAccess === DATA_SCOPES.TOTAL;
   async function handleProcessAttendance(event) {
     event.preventDefault();
 

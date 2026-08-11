@@ -4,16 +4,30 @@ import {
   AlertTriangle,
   CheckCircle2,
   Clock,
-  Database,
   Fingerprint,
   RefreshCw,
+  TrendingUp,
   UserCheck,
   Users,
 } from "lucide-react";
 
+import {
+  AreaChart,
+  Area,
+  BarChart,
+  Bar,
+  PieChart,
+  Pie,
+  Cell,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+} from "recharts";
+
 import { dashboardApi } from "../../api/dashboardApi";
 import PageHeader from "../../components/layout/PageHeader";
-import MetricCard from "../../components/ui/MetricCard";
 
 function formatNumber(value) {
   return Number(value ?? 0).toLocaleString("es-MX");
@@ -21,7 +35,6 @@ function formatNumber(value) {
 
 function formatDateTime(value) {
   if (!value) return "Sin registros";
-
   try {
     return new Intl.DateTimeFormat("es-MX", {
       dateStyle: "medium",
@@ -33,16 +46,13 @@ function formatDateTime(value) {
 }
 
 function safeText(value, fallback = "No disponible") {
-  const text = String(value ?? "").trim();
-
-  return text || fallback;
+  return String(value ?? "").trim() || fallback;
 }
+
 function formatShortDate(value) {
   if (!value) return "";
-
   try {
     return new Intl.DateTimeFormat("es-MX", {
-      weekday: "short",
       day: "2-digit",
       month: "short",
     }).format(new Date(`${value}T00:00:00`));
@@ -51,42 +61,39 @@ function formatShortDate(value) {
   }
 }
 
-function getMaxChartValue(rows) {
-  const maxValue = Math.max(
-    ...rows.map((row) => Number(row.total ?? 0)),
-    1
-  );
-
-  return maxValue;
+function getPunchLabel(row) {
+  return row.punch_label || row.status_label || `Punch ${row.punch ?? "N/D"}`;
 }
-function getMaxValueByField(rows, fieldName) {
-  return Math.max(
-    ...rows.map((row) => Number(row[fieldName] ?? 0)),
-    1
-  );
-}
-function getBarWidth(value, maxValue) {
-  const safeValue = Number(value ?? 0);
 
-  if (safeValue <= 0) return "0%";
-
-  return `${Math.max((safeValue / maxValue) * 100, 8)}%`;
-}
 function getPercent(value, total) {
   const safeValue = Number(value ?? 0);
   const safeTotal = Number(total ?? 0);
-
   if (safeTotal <= 0) return 0;
-
   return Math.round((safeValue / safeTotal) * 100);
 }
-function getPunchLabel(row) {
-  return (
-    row.punch_label ||
-    row.status_label ||
-    `Punch ${row.punch ?? "N/D"}`
-  );
-}
+
+// Colores para gráficas
+const COLORS = {
+  completos: "#10b981",
+  retardos: "#f59e0b",
+  faltas: "#ef4444",
+  revision: "#8b5cf6",
+  omisiones: "#f97316",
+  puntualidad: "#3b82f6",
+  asistencia: "#10b981",
+};
+
+const PIE_COLORS = ["#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#f97316", "#6366f1"];
+
+const INCIDENCIA_COLORS = {
+  RETARDO: "#f59e0b",
+  FALTA: "#ef4444",
+  OMISION: "#f97316",
+  TIEMPO_EXTRA: "#3b82f6",
+  SANCION: "#dc2626",
+  REVISION: "#8b5cf6",
+  ADMINISTRATIVA: "#6b7280",
+};
 
 function DashboardPage() {
   const [dashboard, setDashboard] = useState(null);
@@ -97,15 +104,10 @@ function DashboardPage() {
     try {
       setLoading(true);
       setError("");
-
       const data = await dashboardApi.obtenerResumen();
-
       setDashboard(data);
     } catch (err) {
-      setError(
-        err.message ||
-          "No fue posible cargar el dashboard real."
-      );
+      setError(err.message || "No fue posible cargar el dashboard.");
     } finally {
       setLoading(false);
     }
@@ -115,101 +117,104 @@ function DashboardPage() {
     loadDashboard();
   }, []);
 
+  // Métricas principales
   const metrics = useMemo(() => {
-    const empleados = dashboard?.empleados ?? {};
-    const marcaciones = dashboard?.marcaciones ?? {};
-    const dispositivos = dashboard?.dispositivos ?? {};
-    const asistenciaHoy = dashboard?.asistencia_hoy ?? {};
-    const retardosHoy =
-      Number(asistenciaHoy.retardos_menores ?? 0) +
-      Number(asistenciaHoy.retardos_mayores ?? 0);
+    if (!dashboard) return [];
+    const empleados = dashboard.empleados ?? {};
+    const asistenciaHoy = dashboard.asistencia_hoy ?? {};
+    const alertas = dashboard.alertas ?? {};
+    const totalHoy = Number(asistenciaHoy.total ?? 0);
+    const completosHoy = Number(asistenciaHoy.completos ?? 0);
+    const pctAsistencia = totalHoy > 0 ? Math.round((completosHoy / totalHoy) * 100) : 0;
 
     return [
       {
         title: "Empleados activos",
         value: formatNumber(empleados.activos),
-        description: `${formatNumber(empleados.total)} empleados registrados`,
+        description: `${formatNumber(empleados.total)} registrados`,
         icon: Users,
+        color: "#3b82f6",
       },
       {
-        title: "Asistencia procesada hoy",
-        value: formatNumber(asistenciaHoy.total),
-        description: `${formatNumber(asistenciaHoy.completos)} asistencias completas`,
+        title: "Puntualidad hoy",
+        value: `${pctAsistencia}%`,
+        description: `${formatNumber(completosHoy)} de ${formatNumber(totalHoy)} completas`,
         icon: CheckCircle2,
+        color: "#10b981",
       },
       {
         title: "Faltas hoy",
         value: formatNumber(asistenciaHoy.faltas),
         description: `${formatNumber(asistenciaHoy.requieren_revision)} requieren revisión`,
         icon: AlertTriangle,
+        color: "#ef4444",
       },
       {
-        title: "Retardos hoy",
-        value: formatNumber(retardosHoy),
-        description: `${formatNumber(asistenciaHoy.retardos_menores)} menores · ${formatNumber(asistenciaHoy.retardos_mayores)} mayores`,
+        title: "Incidencias pendientes",
+        value: formatNumber(alertas.asistencias_revision_hoy),
+        description: `${formatNumber(alertas.empleados_sin_horario)} sin horario`,
         icon: Clock,
-      },
-      {
-        title: "Puntos generados hoy",
-        value: formatNumber(asistenciaHoy.puntos_generados),
-        description: "Puntos acumulados por retardos del día",
-        icon: UserCheck,
-      },
-      {
-        title: "Marcaciones de hoy",
-        value: formatNumber(marcaciones.hoy),
-        description: `${formatNumber(marcaciones.total)} marcaciones crudas totales`,
-        icon: Fingerprint,
+        color: "#f59e0b",
       },
     ];
   }, [dashboard]);
 
-  const ultimasMarcaciones =
-    dashboard?.ultimas_marcaciones ?? [];
+  // Datos para BarChart 7 días
+  const barChartData = useMemo(() => {
+    if (!dashboard) return [];
+    return (dashboard.asistencia_ultimos_dias ?? []).map((row) => ({
+      fecha: formatShortDate(row.fecha),
+      Completas: Number(row.completos ?? 0),
+      Retardos: Number(row.retardos ?? 0),
+      Faltas: Number(row.faltas ?? 0),
+    }));
+  }, [dashboard]);
 
-  const asistenciaHoy = dashboard?.asistencia_hoy ?? {};
+  // Datos para PieChart distribución de hoy
+  const pieChartData = useMemo(() => {
+    if (!dashboard) return [];
+    const hoy = dashboard.asistencia_hoy ?? {};
+    const data = [];
+    if (Number(hoy.completos) > 0) data.push({ name: "Completas", value: Number(hoy.completos) });
+    const retardos = Number(hoy.retardos_menores ?? 0) + Number(hoy.retardos_mayores ?? 0);
+    if (retardos > 0) data.push({ name: "Retardos", value: retardos });
+    if (Number(hoy.faltas) > 0) data.push({ name: "Faltas", value: Number(hoy.faltas) });
+    if (Number(hoy.requieren_revision) > 0) data.push({ name: "Revisión", value: Number(hoy.requieren_revision) });
+    return data;
+  }, [dashboard]);
+
+  // Datos para AreaChart tendencia 30 días
+  const tendenciaData = useMemo(() => {
+    if (!dashboard) return [];
+    return (dashboard.tendencia_puntualidad ?? []).map((row) => ({
+      fecha: formatShortDate(row.fecha),
+      Puntualidad: Number(row.pct_puntualidad ?? 0),
+      Asistencia: Number(row.pct_asistencia ?? 0),
+    }));
+  }, [dashboard]);
+
+  // Datos para PieChart incidencias por categoría
+  const incidenciasCatData = useMemo(() => {
+    if (!dashboard) return [];
+    return (dashboard.incidencias_por_categoria ?? []).map((row) => ({
+      name: row.tipo_nombre || row.categoria,
+      value: Number(row.cantidad ?? 0),
+      categoria: row.categoria,
+    }));
+  }, [dashboard]);
+
+  // Rankings
+  const topFaltas = dashboard?.top_empleados_faltas ?? [];
+  const topRetardos = dashboard?.top_empleados_retardos ?? [];
+  const departamentosIncidencias = dashboard?.departamentos_incidencias ?? [];
+  const ultimasMarcaciones = dashboard?.ultimas_marcaciones ?? [];
   const alertas = dashboard?.alertas ?? {};
-
-  const asistenciaUltimosDias =
-    dashboard?.asistencia_ultimos_dias ?? [];
-
-  const maxAsistenciaUltimosDias = getMaxChartValue(
-    asistenciaUltimosDias
-  );
-  const topEmpleadosFaltas =
-    dashboard?.top_empleados_faltas ?? [];
-
-  const topEmpleadosRetardos =
-    dashboard?.top_empleados_retardos ?? [];
-
-  const maxTopEmpleadosFaltas = getMaxValueByField(
-    topEmpleadosFaltas,
-    "faltas"
-  );
-
-  const maxTopEmpleadosRetardos = getMaxValueByField(
-    topEmpleadosRetardos,
-    "total_retardos"
-  );
-  const retardosAsistenciaHoy =
-    Number(asistenciaHoy.retardos_menores ?? 0) +
-    Number(asistenciaHoy.retardos_mayores ?? 0);
-
-  const departamentosIncidencias =
-    dashboard?.departamentos_incidencias ?? [];
-
-  const maxDepartamentosIncidencias = getMaxValueByField(
-    departamentosIncidencias,
-    "total_incidencias"
-  );
-
-  const totalAsistenciaHoy = Number(asistenciaHoy.total ?? 0);
 
   return (
     <div className="page-stack">
       <PageHeader
-        title="Dashboard Super Admin"
-        description="Resumen de empleados, asistencia, dispositivos y marcaciones sincronizadas desde BD."
+        title="Dashboard"
+        description="Resumen ejecutivo de asistencia, puntualidad e incidencias."
       >
         <button
           className="primary-button"
@@ -235,8 +240,8 @@ function DashboardPage() {
       {loading && !dashboard && (
         <section className="panel-card">
           <div className="empty-state">
-            <Database size={42} />
-            <h3>Cargando dashboard real</h3>
+            <RefreshCw size={42} />
+            <h3>Cargando dashboard</h3>
             <p>Consultando información desde PostgreSQL.</p>
           </div>
         </section>
@@ -244,526 +249,313 @@ function DashboardPage() {
 
       {dashboard && (
         <>
-          <section className="metrics-grid">
-            {metrics.map((metric) => (
-              <MetricCard
-                key={metric.title}
-                icon={metric.icon}
-                title={metric.title}
-                value={metric.value}
-                description={metric.description}
-              />
-            ))}
+          {/* Métricas KPI */}
+          <section className="metrics-grid four-columns">
+            {metrics.map((m) => {
+              const Icon = m.icon;
+              return (
+                <article className="metric-card" key={m.title}>
+                  <div className="metric-icon" style={{ color: m.color }}>
+                    <Icon size={22} />
+                  </div>
+                  <div>
+                    <p>{m.title}</p>
+                    <strong>{m.value}</strong>
+                    <span>{m.description}</span>
+                  </div>
+                </article>
+              );
+            })}
           </section>
 
+          {/* Gráficas principales: BarChart + PieChart */}
           <section className="dashboard-grid">
+            {/* BarChart: Asistencia últimos 7 días */}
             <article className="panel-card">
               <div className="panel-header">
                 <div>
-                  <h3>Resumen de empleados</h3>
-                  <p>Estado actual del catálogo de personal.</p>
+                  <h3>Asistencia últimos 7 días</h3>
+                  <p>Distribución diaria de completas, retardos y faltas.</p>
                 </div>
-                <Users size={22} />
+                <UserCheck size={22} />
               </div>
 
-              <div className="info-grid">
-                <div>
-                  <span>Total</span>
-                  <strong>
-                    {formatNumber(dashboard.empleados.total)}
-                  </strong>
+              {barChartData.length > 0 ? (
+                <div className="chart-container">
+                  <BarChart width={500} height={270} data={barChartData} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                    <XAxis dataKey="fecha" tick={{ fontSize: 11 }} />
+                    <YAxis tick={{ fontSize: 11 }} />
+                    <Tooltip
+                      contentStyle={{ borderRadius: 8, fontSize: 12 }}
+                      labelStyle={{ fontWeight: 600 }}
+                    />
+                    <Legend wrapperStyle={{ fontSize: 12 }} />
+                    <Bar dataKey="Completas" stackId="a" fill={COLORS.completos} radius={[0, 0, 0, 0]} />
+                    <Bar dataKey="Retardos" stackId="a" fill={COLORS.retardos} />
+                    <Bar dataKey="Faltas" stackId="a" fill={COLORS.faltas} radius={[4, 4, 0, 0]} />
+                  </BarChart>
                 </div>
-
-                <div>
-                  <span>Activos</span>
-                  <strong>
-                    {formatNumber(dashboard.empleados.activos)}
-                  </strong>
+              ) : (
+                <div className="empty-state">
+                  <p>Sin datos de asistencia procesada en los últimos 7 días.</p>
                 </div>
-
-                <div>
-                  <span>Inactivos</span>
-                  <strong>
-                    {formatNumber(dashboard.empleados.inactivos)}
-                  </strong>
-                </div>
-
-                <div>
-                  <span>Sin usuario ZKTeco</span>
-                  <strong>
-                    {formatNumber(dashboard.empleados.sin_zk)}
-                  </strong>
-                </div>
-              </div>
+              )}
             </article>
 
+            {/* PieChart: Distribución de hoy */}
             <article className="panel-card">
               <div className="panel-header">
                 <div>
-                  <h3>Estado de datos recibidos</h3>
-                  <p>Marcaciones crudas almacenadas en PostgreSQL.</p>
+                  <h3>Distribución de hoy</h3>
+                  <p>Proporción de asistencias por estatus del día actual.</p>
                 </div>
                 <CheckCircle2 size={22} />
               </div>
 
-              <div className="info-grid">
-                <div>
-                  <span>Marcaciones totales</span>
-                  <strong>
-                    {formatNumber(dashboard.marcaciones.total)}
-                  </strong>
+              {pieChartData.length > 0 ? (
+                <div className="chart-container">
+                  <PieChart width={400} height={270}>
+                    <Pie
+                      data={pieChartData}
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={55}
+                      outerRadius={95}
+                      dataKey="value"
+                      label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                      labelLine={false}
+                    >
+                      {pieChartData.map((_, index) => (
+                        <Cell key={`cell-${index}`} fill={PIE_COLORS[index % PIE_COLORS.length]} />
+                      ))}
+                    </Pie>
+                    <Tooltip formatter={(value) => formatNumber(value)} />
+                    <Legend wrapperStyle={{ fontSize: 12 }} />
+                  </PieChart>
                 </div>
-
-                <div>
-                  <span>Marcaciones de hoy</span>
-                  <strong>
-                    {formatNumber(dashboard.marcaciones.hoy)}
-                  </strong>
+              ) : (
+                <div className="empty-state">
+                  <p>No hay asistencia procesada hoy.</p>
                 </div>
-
-                <div>
-                  <span>Última marcación</span>
-                  <strong>
-                    {formatDateTime(
-                      dashboard.marcaciones.ultima_fecha_hora
-                    )}
-                  </strong>
-                </div>
-
-                <div>
-                  <span>Dispositivos activos</span>
-                  <strong>
-                    {formatNumber(dashboard.dispositivos.activos)}
-                  </strong>
-                </div>
-              </div>
+              )}
             </article>
           </section>
-          
-          
+
+          {/* AreaChart: Tendencia de puntualidad 30 días */}
           <section className="panel-card">
             <div className="panel-header">
               <div>
-                <h3>Asistencia procesada de hoy</h3>
-                <p>
-                  Resultado del procesamiento diario de entradas, salidas,
-                  retardos, faltas y puntos.
-                </p>
+                <h3>Tendencia de puntualidad — 30 días</h3>
+                <p>Porcentaje diario de asistencias completas (puntualidad) vs asistencia total (con retardos).</p>
               </div>
-
-              <CheckCircle2 size={22} />
+              <TrendingUp size={22} />
             </div>
 
-            <div className="info-grid">
-              <div>
-                <span>Total procesadas</span>
-                <strong>
-                  {formatNumber(asistenciaHoy.total)}
-                </strong>
-              </div>
-
-              <div>
-                <span>Completas</span>
-                <strong>
-                  {formatNumber(asistenciaHoy.completos)}
-                </strong>
-              </div>
-
-              <div>
-                <span>Retardos menores</span>
-                <strong>
-                  {formatNumber(asistenciaHoy.retardos_menores)}
-                </strong>
-              </div>
-
-              <div>
-                <span>Retardos mayores</span>
-                <strong>
-                  {formatNumber(asistenciaHoy.retardos_mayores)}
-                </strong>
-              </div>
-
-              <div>
-                <span>Faltas</span>
-                <strong>
-                  {formatNumber(asistenciaHoy.faltas)}
-                </strong>
-              </div>
-
-              <div>
-                <span>Requieren revisión</span>
-                <strong>
-                  {formatNumber(asistenciaHoy.requieren_revision)}
-                </strong>
-              </div>
-
-              <div>
-                <span>Puntos generados</span>
-                <strong>
-                  {formatNumber(asistenciaHoy.puntos_generados)}
-                </strong>
-              </div>
-            </div>
-          </section>
-
-          <section className="panel-card">
-            <div className="panel-header">
-              <div>
-                <h3>Distribución de asistencia de hoy</h3>
-                <p>
-                  Proporción de asistencias completas, retardos, faltas y
-                  registros que requieren revisión.
-                </p>
-              </div>
-
-              <CheckCircle2 size={22} />
-            </div>
-
-            <div className="status-distribution-grid">
-              <div className="status-distribution-card">
-                <div className="status-distribution-header">
-                  <span>Completas</span>
-                  <strong>{formatNumber(asistenciaHoy.completos)}</strong>
-                </div>
-
-                <div className="status-distribution-track">
-                  <div
-                    className="status-distribution-bar complete"
-                    style={{
-                      width: `${getPercent(
-                        asistenciaHoy.completos,
-                        totalAsistenciaHoy
-                      )}%`,
-                    }}
-                  />
-                </div>
-
-                <small>
-                  {getPercent(asistenciaHoy.completos, totalAsistenciaHoy)}%
-                  del total procesado
-                </small>
-              </div>
-
-              <div className="status-distribution-card">
-                <div className="status-distribution-header">
-                  <span>Retardos</span>
-                  <strong>{formatNumber(retardosAsistenciaHoy)}</strong>
-                </div>
-
-                <div className="status-distribution-track">
-                  <div
-                    className="status-distribution-bar delay"
-                    style={{
-                      width: `${getPercent(
-                        retardosAsistenciaHoy,
-                        totalAsistenciaHoy
-                      )}%`,
-                    }}
-                  />
-                </div>
-
-                <small>
-                  {getPercent(retardosAsistenciaHoy, totalAsistenciaHoy)}%
-                  del total procesado
-                </small>
-              </div>
-
-              <div className="status-distribution-card">
-                <div className="status-distribution-header">
-                  <span>Faltas</span>
-                  <strong>{formatNumber(asistenciaHoy.faltas)}</strong>
-                </div>
-
-                <div className="status-distribution-track">
-                  <div
-                    className="status-distribution-bar absence"
-                    style={{
-                      width: `${getPercent(
-                        asistenciaHoy.faltas,
-                        totalAsistenciaHoy
-                      )}%`,
-                    }}
-                  />
-                </div>
-
-                <small>
-                  {getPercent(asistenciaHoy.faltas, totalAsistenciaHoy)}%
-                  del total procesado
-                </small>
-              </div>
-
-              <div className="status-distribution-card">
-                <div className="status-distribution-header">
-                  <span>Revisión RH</span>
-                  <strong>{formatNumber(asistenciaHoy.requieren_revision)}</strong>
-                </div>
-
-                <div className="status-distribution-track">
-                  <div
-                    className="status-distribution-bar review"
-                    style={{
-                      width: `${getPercent(
-                        asistenciaHoy.requieren_revision,
-                        totalAsistenciaHoy
-                      )}%`,
-                    }}
-                  />
-                </div>
-
-                <small>
-                  {getPercent(
-                    asistenciaHoy.requieren_revision,
-                    totalAsistenciaHoy
-                  )}
-                  % del total procesado
-                </small>
-              </div>
-            </div>
-          </section>
-
-
-          <section className="panel-card">
-            <div className="panel-header">
-              <div>
-                <h3>Alertas RH</h3>
-                <p>
-                  Situaciones que requieren revisión operativa o administrativa.
-                </p>
-              </div>
-
-              <AlertTriangle size={22} />
-            </div>
-
-            <div className="info-grid">
-              <div>
-                <span>Empleados sin User ID ZKTeco</span>
-                <strong>
-                  {formatNumber(alertas.empleados_sin_zk)}
-                </strong>
-              </div>
-
-              <div>
-                <span>Empleados sin horario vigente</span>
-                <strong>
-                  {formatNumber(alertas.empleados_sin_horario)}
-                </strong>
-              </div>
-
-              <div>
-                <span>Marcaciones sin empleado hoy</span>
-                <strong>
-                  {formatNumber(alertas.marcaciones_sin_empleado_hoy)}
-                </strong>
-              </div>
-
-              <div>
-                <span>Asistencias por revisar hoy</span>
-                <strong>
-                  {formatNumber(alertas.asistencias_revision_hoy)}
-                </strong>
-              </div>
-
-              <div>
-                <span>Faltas hoy</span>
-                <strong>
-                  {formatNumber(alertas.faltas_hoy)}
-                </strong>
-              </div>
-
-              <div>
-                <span>Retardos mayores hoy</span>
-                <strong>
-                  {formatNumber(alertas.retardos_mayores_hoy)}
-                </strong>
-              </div>
-            </div>
-          </section>
-
-          
-          <section className="panel-card">
-            <div className="panel-header">
-              <div>
-                <h3>Asistencia últimos 7 días</h3>
-                <p>
-                  Comparativo diario de asistencias completas, retardos,
-                  faltas y registros que requieren revisión.
-                </p>
-              </div>
-
-              <Clock size={22} />
-            </div>
-
-            {asistenciaUltimosDias.length === 0 ? (
-              <div className="empty-state">
-                <Clock size={42} />
-
-                <h3>Sin datos procesados</h3>
-
-                <p>
-                  Procesa asistencia diaria para comenzar a visualizar la
-                  tendencia.
-                </p>
+            {tendenciaData.length > 0 ? (
+              <div className="chart-container chart-wide">
+                  <AreaChart width={900} height={250} data={tendenciaData} margin={{ top: 10, right: 20, left: -10, bottom: 0 }}>
+                    <defs>
+                      <linearGradient id="gradPuntualidad" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor={COLORS.puntualidad} stopOpacity={0.3} />
+                        <stop offset="95%" stopColor={COLORS.puntualidad} stopOpacity={0} />
+                      </linearGradient>
+                      <linearGradient id="gradAsistencia" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor={COLORS.asistencia} stopOpacity={0.3} />
+                        <stop offset="95%" stopColor={COLORS.asistencia} stopOpacity={0} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                    <XAxis
+                      dataKey="fecha"
+                      tick={{ fontSize: 10 }}
+                      interval={Math.floor(tendenciaData.length / 8)}
+                    />
+                    <YAxis tick={{ fontSize: 11 }} domain={[0, 100]} unit="%" />
+                    <Tooltip
+                      contentStyle={{ borderRadius: 8, fontSize: 12 }}
+                      formatter={(value) => `${value}%`}
+                    />
+                    <Legend wrapperStyle={{ fontSize: 12 }} />
+                    <Area
+                      type="monotone"
+                      dataKey="Puntualidad"
+                      stroke={COLORS.puntualidad}
+                      fill="url(#gradPuntualidad)"
+                      strokeWidth={2}
+                    />
+                    <Area
+                      type="monotone"
+                      dataKey="Asistencia"
+                      stroke={COLORS.asistencia}
+                      fill="url(#gradAsistencia)"
+                      strokeWidth={2}
+                    />
+                  </AreaChart>
               </div>
             ) : (
-              <div className="attendance-chart-list">
-                {asistenciaUltimosDias.map((row) => (
-                  <div className="attendance-chart-row" key={row.fecha}>
-                    <div className="attendance-chart-date">
-                      <strong>{formatShortDate(row.fecha)}</strong>
-                      <span>{formatNumber(row.total)} total</span>
-                    </div>
-
-                    <div className="attendance-chart-bars">
-                      <div className="attendance-chart-track">
-                        <div
-                          className="attendance-chart-bar complete"
-                          style={{
-                            width: getBarWidth(
-                              row.completos,
-                              maxAsistenciaUltimosDias
-                            ),
-                          }}
-                          title={`Completas: ${formatNumber(row.completos)}`}
-                        />
-                      </div>
-
-                      <div className="attendance-chart-track">
-                        <div
-                          className="attendance-chart-bar delay"
-                          style={{
-                            width: getBarWidth(
-                              row.retardos,
-                              maxAsistenciaUltimosDias
-                            ),
-                          }}
-                          title={`Retardos: ${formatNumber(row.retardos)}`}
-                        />
-                      </div>
-
-                      <div className="attendance-chart-track">
-                        <div
-                          className="attendance-chart-bar absence"
-                          style={{
-                            width: getBarWidth(
-                              row.faltas,
-                              maxAsistenciaUltimosDias
-                            ),
-                          }}
-                          title={`Faltas: ${formatNumber(row.faltas)}`}
-                        />
-                      </div>
-
-                      <div className="attendance-chart-track">
-                        <div
-                          className="attendance-chart-bar review"
-                          style={{
-                            width: getBarWidth(
-                              row.requieren_revision,
-                              maxAsistenciaUltimosDias
-                            ),
-                          }}
-                          title={`Revisión: ${formatNumber(
-                            row.requieren_revision
-                          )}`}
-                        />
-                      </div>
-                    </div>
-
-                    <div className="attendance-chart-values">
-                      <span>Completas: {formatNumber(row.completos)}</span>
-                      <span>Retardos: {formatNumber(row.retardos)}</span>
-                      <span>Faltas: {formatNumber(row.faltas)}</span>
-                      <span>Revisión: {formatNumber(row.requieren_revision)}</span>
-                    </div>
-                  </div>
-                ))}
-
-                <div className="attendance-chart-legend">
-                  <span>
-                    <i className="complete" /> Completas
-                  </span>
-                  <span>
-                    <i className="delay" /> Retardos
-                  </span>
-                  <span>
-                    <i className="absence" /> Faltas
-                  </span>
-                  <span>
-                    <i className="review" /> Revisión RH
-                  </span>
-                </div>
+              <div className="empty-state">
+                <p>Sin datos suficientes para mostrar tendencia.</p>
               </div>
             )}
           </section>
-          
+
+          {/* Incidencias por categoría + Alertas RH */}
+          <section className="dashboard-grid">
+            {/* PieChart incidencias por categoría */}
+            <article className="panel-card">
+              <div className="panel-header">
+                <div>
+                  <h3>Incidencias por tipo — 30 días</h3>
+                  <p>Distribución de incidencias registradas por categoría.</p>
+                </div>
+                <AlertTriangle size={22} />
+              </div>
+
+              {incidenciasCatData.length > 0 ? (
+                <div className="chart-container">
+                  <PieChart width={400} height={250}>
+                    <Pie
+                      data={incidenciasCatData}
+                      cx="50%"
+                      cy="50%"
+                      outerRadius={85}
+                      dataKey="value"
+                      label={({ name, value }) => `${name}: ${value}`}
+                      labelLine={true}
+                    >
+                      {incidenciasCatData.map((entry, index) => (
+                        <Cell
+                          key={`cat-${index}`}
+                          fill={INCIDENCIA_COLORS[entry.categoria] || PIE_COLORS[index % PIE_COLORS.length]}
+                        />
+                      ))}
+                    </Pie>
+                    <Tooltip formatter={(value) => formatNumber(value)} />
+                  </PieChart>
+                </div>
+              ) : (
+                <div className="empty-state">
+                  <p>Sin incidencias registradas en los últimos 30 días.</p>
+                </div>
+              )}
+            </article>
+
+            {/* Alertas RH */}
+            <article className="panel-card">
+              <div className="panel-header">
+                <div>
+                  <h3>Alertas RH</h3>
+                  <p>Situaciones que requieren atención operativa.</p>
+                </div>
+                <AlertTriangle size={22} />
+              </div>
+
+              <div className="alert-list">
+                {Number(alertas.empleados_sin_zk) > 0 && (
+                  <div className="alert-item warning">
+                    <Users size={18} />
+                    <div>
+                      <strong>{formatNumber(alertas.empleados_sin_zk)}</strong>
+                      <span>Empleados sin User ID ZKTeco</span>
+                    </div>
+                  </div>
+                )}
+
+                {Number(alertas.empleados_sin_horario) > 0 && (
+                  <div className="alert-item warning">
+                    <Clock size={18} />
+                    <div>
+                      <strong>{formatNumber(alertas.empleados_sin_horario)}</strong>
+                      <span>Empleados sin horario vigente</span>
+                    </div>
+                  </div>
+                )}
+
+                {Number(alertas.marcaciones_sin_empleado_hoy) > 0 && (
+                  <div className="alert-item danger">
+                    <Fingerprint size={18} />
+                    <div>
+                      <strong>{formatNumber(alertas.marcaciones_sin_empleado_hoy)}</strong>
+                      <span>Marcaciones sin empleado hoy</span>
+                    </div>
+                  </div>
+                )}
+
+                {Number(alertas.faltas_hoy) > 0 && (
+                  <div className="alert-item danger">
+                    <AlertTriangle size={18} />
+                    <div>
+                      <strong>{formatNumber(alertas.faltas_hoy)}</strong>
+                      <span>Faltas registradas hoy</span>
+                    </div>
+                  </div>
+                )}
+
+                {Number(alertas.retardos_mayores_hoy) > 0 && (
+                  <div className="alert-item warning">
+                    <Clock size={18} />
+                    <div>
+                      <strong>{formatNumber(alertas.retardos_mayores_hoy)}</strong>
+                      <span>Retardos mayores hoy</span>
+                    </div>
+                  </div>
+                )}
+
+                {Number(alertas.asistencias_revision_hoy) > 0 && (
+                  <div className="alert-item info">
+                    <CheckCircle2 size={18} />
+                    <div>
+                      <strong>{formatNumber(alertas.asistencias_revision_hoy)}</strong>
+                      <span>Asistencias requieren revisión</span>
+                    </div>
+                  </div>
+                )}
+
+                {Object.values(alertas).every((v) => Number(v) === 0) && (
+                  <div className="empty-state">
+                    <CheckCircle2 size={32} />
+                    <p>Sin alertas activas. Todo en orden.</p>
+                  </div>
+                )}
+              </div>
+            </article>
+          </section>
+
+          {/* Rankings: Top faltas + Top retardos */}
           <section className="dashboard-grid">
             <article className="panel-card">
               <div className="panel-header">
                 <div>
-                  <h3>Top empleados con más faltas</h3>
-                  <p>
-                    Empleados con más registros de falta en los últimos 30 días.
-                  </p>
+                  <h3>Top faltas — 30 días</h3>
+                  <p>Empleados con más faltas registradas.</p>
                 </div>
-
                 <AlertTriangle size={22} />
               </div>
 
-              {topEmpleadosFaltas.length === 0 ? (
+              {topFaltas.length === 0 ? (
                 <div className="empty-state">
-                  <CheckCircle2 size={42} />
-
-                  <h3>Sin faltas recientes</h3>
-
-                  <p>
-                    No hay empleados con faltas registradas en los últimos 30 días.
-                  </p>
+                  <CheckCircle2 size={32} />
+                  <p>Sin faltas en los últimos 30 días.</p>
                 </div>
               ) : (
                 <div className="ranking-list">
-                  {topEmpleadosFaltas.map((row, index) => (
+                  {topFaltas.map((row, index) => (
                     <div className="ranking-row" key={row.empleado_id}>
-                      <div className="ranking-position">
-                        {index + 1}
-                      </div>
-
+                      <div className="ranking-position">{index + 1}</div>
                       <div className="ranking-content">
                         <div className="ranking-header">
                           <div>
-                            <strong>
-                              {safeText(row.empleado_nombre)}
-                            </strong>
-                            <span>
-                              {safeText(row.codigo_empleado, "Sin código")}
-                            </span>
+                            <strong>{safeText(row.empleado_nombre)}</strong>
+                            <span>{safeText(row.codigo_empleado)}</span>
                           </div>
-
-                          <strong>
-                            {formatNumber(row.faltas)}
-                          </strong>
+                          <strong className="ranking-value danger">{row.faltas}</strong>
                         </div>
-
                         <div className="ranking-track">
                           <div
                             className="ranking-bar absence"
-                            style={{
-                              width: getBarWidth(
-                                row.faltas,
-                                maxTopEmpleadosFaltas
-                              ),
-                            }}
+                            style={{ width: `${Math.max((row.faltas / (topFaltas[0]?.faltas || 1)) * 100, 8)}%` }}
                           />
-                        </div>
-
-                        <div className="ranking-meta">
-                          <span>
-                            Revisión RH:{" "}
-                            {formatNumber(row.requieren_revision)}
-                          </span>
-                          <span>
-                            Días procesados:{" "}
-                            {formatNumber(row.dias_procesados)}
-                          </span>
                         </div>
                       </div>
                     </div>
@@ -775,76 +567,40 @@ function DashboardPage() {
             <article className="panel-card">
               <div className="panel-header">
                 <div>
-                  <h3>Top empleados con más retardos</h3>
-                  <p>
-                    Empleados con más retardos menores o mayores en los últimos
-                    30 días.
-                  </p>
+                  <h3>Top retardos — 30 días</h3>
+                  <p>Empleados con más retardos y puntos acumulados.</p>
                 </div>
-
                 <Clock size={22} />
               </div>
 
-              {topEmpleadosRetardos.length === 0 ? (
+              {topRetardos.length === 0 ? (
                 <div className="empty-state">
-                  <CheckCircle2 size={42} />
-
-                  <h3>Sin retardos recientes</h3>
-
-                  <p>
-                    No hay empleados con retardos registrados en los últimos 30
-                    días.
-                  </p>
+                  <CheckCircle2 size={32} />
+                  <p>Sin retardos en los últimos 30 días.</p>
                 </div>
               ) : (
                 <div className="ranking-list">
-                  {topEmpleadosRetardos.map((row, index) => (
+                  {topRetardos.map((row, index) => (
                     <div className="ranking-row" key={row.empleado_id}>
-                      <div className="ranking-position">
-                        {index + 1}
-                      </div>
-
+                      <div className="ranking-position">{index + 1}</div>
                       <div className="ranking-content">
                         <div className="ranking-header">
                           <div>
-                            <strong>
-                              {safeText(row.empleado_nombre)}
-                            </strong>
-                            <span>
-                              {safeText(row.codigo_empleado, "Sin código")}
-                            </span>
+                            <strong>{safeText(row.empleado_nombre)}</strong>
+                            <span>{safeText(row.codigo_empleado)}</span>
                           </div>
-
-                          <strong>
-                            {formatNumber(row.total_retardos)}
-                          </strong>
+                          <strong className="ranking-value warning">{row.total_retardos}</strong>
                         </div>
-
                         <div className="ranking-track">
                           <div
                             className="ranking-bar delay"
-                            style={{
-                              width: getBarWidth(
-                                row.total_retardos,
-                                maxTopEmpleadosRetardos
-                              ),
-                            }}
+                            style={{ width: `${Math.max((row.total_retardos / (topRetardos[0]?.total_retardos || 1)) * 100, 8)}%` }}
                           />
                         </div>
-
                         <div className="ranking-meta">
-                          <span>
-                            Menores:{" "}
-                            {formatNumber(row.retardos_menores)}
-                          </span>
-                          <span>
-                            Mayores:{" "}
-                            {formatNumber(row.retardos_mayores)}
-                          </span>
-                          <span>
-                            Puntos:{" "}
-                            {formatNumber(row.puntos_generados)}
-                          </span>
+                          <span>Menores: {row.retardos_menores}</span>
+                          <span>Mayores: {row.retardos_mayores}</span>
+                          <span>Puntos: {row.puntos_generados}</span>
                         </div>
                       </div>
                     </div>
@@ -853,124 +609,70 @@ function DashboardPage() {
               )}
             </article>
           </section>
-          
-          <section className="panel-card">
-            <div className="panel-header">
-              <div>
-                <h3>Departamentos con más incidencias</h3>
-                <p>
-                  Unidades con mayor concentración de faltas, retardos,
-                  omisiones y registros por revisar en los últimos 30 días.
-                </p>
+
+          {/* Departamentos con incidencias */}
+          {departamentosIncidencias.length > 0 && (
+            <section className="panel-card">
+              <div className="panel-header">
+                <div>
+                  <h3>Departamentos con más incidencias — 30 días</h3>
+                  <p>Unidades con mayor concentración de faltas, retardos y omisiones.</p>
+                </div>
+                <Users size={22} />
               </div>
 
-              <AlertTriangle size={22} />
-            </div>
-
-            {departamentosIncidencias.length === 0 ? (
-              <div className="empty-state">
-                <CheckCircle2 size={42} />
-
-                <h3>Sin incidencias por departamento</h3>
-
-                <p>
-                  No hay incidencias registradas por unidad organizacional en los
-                  últimos 30 días.
-                </p>
-              </div>
-            ) : (
               <div className="department-incidence-list">
                 {departamentosIncidencias.map((row, index) => (
                   <div
                     className="department-incidence-row"
-                    key={`${row.unidad_organizacional_id ?? "sin-unidad"}-${index}`}
+                    key={`${row.unidad_organizacional_id ?? "sin"}-${index}`}
                   >
-                    <div className="ranking-position">
-                      {index + 1}
-                    </div>
-
+                    <div className="ranking-position">{index + 1}</div>
                     <div className="department-incidence-content">
                       <div className="ranking-header">
                         <div>
-                          <strong>
-                            {safeText(
-                              row.departamento_nombre,
-                              "Sin departamento"
-                            )}
-                          </strong>
-
-                          <span>
-                            {formatNumber(row.empleados_involucrados)} empleados
-                            involucrados
-                          </span>
+                          <strong>{safeText(row.departamento_nombre, "Sin departamento")}</strong>
+                          <span>{formatNumber(row.empleados_involucrados)} empleados</span>
                         </div>
-
-                        <strong>
-                          {formatNumber(row.total_incidencias)}
-                        </strong>
+                        <strong>{formatNumber(row.total_incidencias)}</strong>
                       </div>
-
                       <div className="ranking-track">
                         <div
                           className="ranking-bar incidence"
                           style={{
-                            width: getBarWidth(
-                              row.total_incidencias,
-                              maxDepartamentosIncidencias
-                            ),
+                            width: `${Math.max(
+                              (row.total_incidencias / (departamentosIncidencias[0]?.total_incidencias || 1)) * 100,
+                              8
+                            )}%`,
                           }}
                         />
                       </div>
-
                       <div className="department-incidence-metrics">
-                        <span>
-                          Faltas: {formatNumber(row.faltas)}
-                        </span>
-
-                        <span>
-                          Retardos: {formatNumber(row.retardos)}
-                        </span>
-
-                        <span>
-                          Retardos mayores:{" "}
-                          {formatNumber(row.retardos_mayores)}
-                        </span>
-
-                        <span>
-                          Omisiones: {formatNumber(row.omisiones)}
-                        </span>
-
-                        <span>
-                          Revisión RH:{" "}
-                          {formatNumber(row.requieren_revision)}
-                        </span>
+                        <span>Faltas: {row.faltas}</span>
+                        <span>Retardos: {row.retardos}</span>
+                        <span>Omisiones: {row.omisiones}</span>
                       </div>
                     </div>
                   </div>
                 ))}
               </div>
-            )}
-          </section>
+            </section>
+          )}
 
-          
+          {/* Últimas marcaciones */}
           <section className="panel-card">
             <div className="panel-header">
               <div>
-                <h3>Últimas checadas reales</h3>
-                <p>
-                  Eventos más recientes guardados en asistencia.marcaciones_crudas.
-                </p>
+                <h3>Últimas checadas</h3>
+                <p>Marcaciones más recientes sincronizadas desde ZKTeco.</p>
               </div>
               <Fingerprint size={22} />
             </div>
 
             {ultimasMarcaciones.length === 0 ? (
               <div className="empty-state">
-                <Clock size={42} />
-                <h3>Sin marcaciones crudas</h3>
-                <p>
-                  Aún no hay checadas sincronizadas desde el reloj ZKTeco.
-                </p>
+                <Fingerprint size={32} />
+                <p>Sin marcaciones sincronizadas.</p>
               </div>
             ) : (
               <div className="simple-table">
@@ -978,36 +680,32 @@ function DashboardPage() {
                   <thead>
                     <tr>
                       <th>Empleado</th>
-                      <th>Código</th>
-                      <th>User ID ZKTeco</th>
+                      <th>User ID ZK</th>
                       <th>Fecha y hora</th>
                       <th>Evento</th>
                       <th>Dispositivo</th>
                     </tr>
                   </thead>
-
                   <tbody>
                     {ultimasMarcaciones.map((row) => (
                       <tr key={row.id}>
                         <td>
-                          <strong>
-                            {safeText(row.empleado_nombre)}
-                          </strong>
+                          <div className="employee-cell">
+                            <div className="employee-avatar">
+                              {(row.empleado_nombre || "?").charAt(0)}
+                            </div>
+                            <div>
+                              <strong>{safeText(row.empleado_nombre)}</strong>
+                              <span>{safeText(row.codigo_empleado, "Sin código")}</span>
+                            </div>
+                          </div>
                         </td>
-                        <td>{safeText(row.codigo_empleado, "Sin código")}</td>
-                        <td>{safeText(row.zk_user_id, "Sin User ID")}</td>
+                        <td>{safeText(row.zk_user_id, "—")}</td>
                         <td>{formatDateTime(row.fecha_hora)}</td>
                         <td>
-                          <span className="badge neutral">
-                            {getPunchLabel(row)}
-                          </span>
+                          <span className="badge neutral">{getPunchLabel(row)}</span>
                         </td>
-                        <td>
-                          {safeText(
-                            row.dispositivo_ip ||
-                              row.dispositivo_origen
-                          )}
-                        </td>
+                        <td>{safeText(row.dispositivo_ip || row.dispositivo_origen)}</td>
                       </tr>
                     ))}
                   </tbody>

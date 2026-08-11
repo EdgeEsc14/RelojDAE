@@ -1,7 +1,7 @@
 from zk import ZK
 import time
 
-ZK_IP = "192.168.137.147"
+ZK_IP = "192.168.137.2"
 ZK_PORT = 4370
 ZK_PASSWORD = 171
 ZK_TIMEOUT = 5

@@ -20,6 +20,9 @@ from app.repositories.asistencia_repo import (
     listar_asistencia_diaria,
     obtener_resumen_asistencia_empleado,
 )
+from app.services.puntos_acumulacion_service import (
+    acumular_puntos_periodo,
+)
 from app.schemas.asistencia import (
     AsistenciaDiariaListadoResponse,
     AsistenciaEmpleadoResumenResponse,
@@ -186,8 +189,19 @@ def post_procesar_asistencia(
             ),
         )
 
-    return procesar_asistencia_diaria(
+    resultado_procesamiento = procesar_asistencia_diaria(
         db=db,
         fecha_inicio=payload.fecha_inicio,
         fecha_fin=payload.fecha_fin,
     )
+
+    # Después de procesar asistencia, acumular puntos y detectar condiciones
+    resultado_acumulacion = acumular_puntos_periodo(
+        db=db,
+        fecha_inicio=payload.fecha_inicio,
+        fecha_fin=payload.fecha_fin,
+    )
+
+    resultado_procesamiento["acumulacion_puntos"] = resultado_acumulacion
+
+    return resultado_procesamiento

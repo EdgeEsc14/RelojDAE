@@ -6,7 +6,8 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
-from app.core.auth_dependencies import require_roles
+from app.core.access_control import AccessScope
+from app.core.auth_dependencies import require_module_access
 from app.core.database import get_db
 from app.repositories.zk_attendance_repo import (
     insertar_marcaciones_crudas,
@@ -25,9 +26,6 @@ from app.services.zk_time_sync_service import sync_zk_time_if_allowed
 router = APIRouter(
     prefix="/zk",
     tags=["ZKTeco"],
-    dependencies=[
-        Depends(require_roles("super_admin", "rh_admin")),
-    ],
 )
 
 
@@ -95,7 +93,17 @@ def _attendance_to_dict(attendance) -> dict:
 
 
 @router.get("/health")
-def zk_health():
+def zk_health(
+    _access_scope: Annotated[
+        AccessScope,
+        Depends(
+            require_module_access(
+                "DISPOSITIVOS",
+                "consultar",
+            )
+        ),
+    ],
+):
     """
     Verifica conexión básica con el reloj ZKTeco.
 
@@ -124,6 +132,15 @@ def zk_health():
 
 @router.get("/users")
 def list_zk_users(
+    _access_scope: Annotated[
+        AccessScope,
+        Depends(
+            require_module_access(
+                "DISPOSITIVOS",
+                "consultar",
+            )
+        ),
+    ],
     include_admin: Annotated[
         bool,
         Query(description="Incluye usuarios administradores del reloj."),
@@ -160,7 +177,18 @@ def list_zk_users(
 
 
 @router.get("/users/{user_id}")
-def get_zk_user_by_user_id(user_id: str):
+def get_zk_user_by_user_id(
+    user_id: str,
+    _access_scope: Annotated[
+        AccessScope,
+        Depends(
+            require_module_access(
+                "DISPOSITIVOS",
+                "consultar",
+            )
+        ),
+    ],
+):
     """
     Busca un usuario específico del reloj por User ID.
 
@@ -202,6 +230,15 @@ def get_zk_user_by_user_id(user_id: str):
 @router.get("/reconciliation/employees")
 def reconcile_zk_users_with_employees(
     db: Annotated[Session, Depends(get_db)],
+    _access_scope: Annotated[
+        AccessScope,
+        Depends(
+            require_module_access(
+                "DISPOSITIVOS",
+                "consultar",
+            )
+        ),
+    ],
 ):
     """
     Compara usuarios reales del reloj ZKTeco contra empleados registrados en PostgreSQL.
@@ -236,6 +273,15 @@ def link_employee_with_zk_user(
     codigo_empleado: str,
     payload: ZkEmployeeLinkRequest,
     db: Annotated[Session, Depends(get_db)],
+    _access_scope: Annotated[
+        AccessScope,
+        Depends(
+            require_module_access(
+                "DISPOSITIVOS",
+                "editar",
+            )
+        ),
+    ],
 ):
     """
     Vincula un empleado de PostgreSQL con un User ID existente en el reloj ZKTeco.
@@ -313,6 +359,15 @@ def link_employee_with_zk_user(
 def unlink_employee_from_zk_user(
     codigo_empleado: str,
     db: Annotated[Session, Depends(get_db)],
+    _access_scope: Annotated[
+        AccessScope,
+        Depends(
+            require_module_access(
+                "DISPOSITIVOS",
+                "editar",
+            )
+        ),
+    ],
 ):
     """
     Desvincula un empleado de su User ID ZKTeco en PostgreSQL.
@@ -360,6 +415,15 @@ def unlink_employee_from_zk_user(
 
 @router.get("/attendance/raw")
 def list_zk_attendance_raw(
+    _access_scope: Annotated[
+        AccessScope,
+        Depends(
+            require_module_access(
+                "DISPOSITIVOS",
+                "consultar",
+            )
+        ),
+    ],
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
     user_id: Annotated[
         str | None,
@@ -465,11 +529,20 @@ def list_zk_attendance_raw(
                 "error": str(exc),
             },
         ) from exc
-    
+
+
 @router.post("/attendance/sync")
 def sync_zk_attendance_to_db(
-    
     db: Annotated[Session, Depends(get_db)],
+    _access_scope: Annotated[
+        AccessScope,
+        Depends(
+            require_module_access(
+                "DISPOSITIVOS",
+                "editar",
+            )
+        ),
+    ],
     limit: Annotated[int, Query(ge=1, le=5000)] = 1000,
     user_id: Annotated[
         str | None,
@@ -484,7 +557,6 @@ def sync_zk_attendance_to_db(
         Query(description="Fecha final YYYY-MM-DD"),
     ] = None,
 ):
-    sync_zk_time_if_allowed()
     """
     Sincroniza marcaciones crudas desde el reloj hacia PostgreSQL.
 
@@ -494,6 +566,8 @@ def sync_zk_attendance_to_db(
     - Solo inserta copia cruda en asistencia.marcaciones_crudas.
     - No duplica marcaciones ya sincronizadas.
     """
+    sync_zk_time_if_allowed()
+
     try:
         parsed_date_from = None
         parsed_date_to = None
@@ -591,10 +665,20 @@ def sync_zk_attendance_to_db(
                 "error": str(exc),
             },
         ) from exc
-    
+
+
 @router.get("/attendance/db")
 def list_zk_attendance_from_db(
     db: Annotated[Session, Depends(get_db)],
+    _access_scope: Annotated[
+        AccessScope,
+        Depends(
+            require_module_access(
+                "DISPOSITIVOS",
+                "consultar",
+            )
+        ),
+    ],
     limit: Annotated[int, Query(ge=1, le=5000)] = 100,
     user_id: Annotated[
         str | None,
@@ -657,9 +741,21 @@ def list_zk_attendance_from_db(
                 "error": str(exc),
             },
         ) from exc
-    
+
+
 @router.post("/time/sync")
-def sync_zk_time(force: bool = False):
+def sync_zk_time(
+    _access_scope: Annotated[
+        AccessScope,
+        Depends(
+            require_module_access(
+                "DISPOSITIVOS",
+                "editar",
+            )
+        ),
+    ],
+    force: bool = False,
+):
     """
     Revisa y corrige la hora del reloj ZKTeco.
 

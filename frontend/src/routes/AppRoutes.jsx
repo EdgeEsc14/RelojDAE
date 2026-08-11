@@ -8,9 +8,12 @@ import AppLayout from "../components/layout/AppLayout";
 import ProtectedRoute from "./ProtectedRoute";
 
 import {
-  ACCESS_LEVELS,
+  DATA_SCOPES,
   MODULES,
 } from "../constants/permissions";
+
+// Alias para compatibilidad con prop allowedAccessLevels
+const ACCESS_LEVELS = DATA_SCOPES;
 
 import LoginPage from "../pages/auth/LoginPage";
 import DashboardPage from "../pages/dashboard/DashboardPage";
@@ -210,7 +213,6 @@ function AppRoutes() {
               allowedAccessLevels={[
                 ACCESS_LEVELS.TOTAL,
                 ACCESS_LEVELS.AREA,
-                ACCESS_LEVELS.LECTURA,
               ]}
             >
               <DepartmentReportPage />

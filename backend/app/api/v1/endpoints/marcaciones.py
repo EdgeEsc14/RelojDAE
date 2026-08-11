@@ -4,23 +4,31 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
+from app.core.access_control import AccessScope
+from app.core.auth_dependencies import require_module_access
 from app.core.database import get_db
 from app.repositories.marcaciones_repo import listar_marcaciones
 from app.schemas.marcaciones import MarcacionesListadoResponse
-from app.core.auth_dependencies import require_roles
+
 
 router = APIRouter(
     prefix="/marcaciones",
     tags=["Marcaciones"],
-    dependencies=[
-        Depends(require_roles("super_admin", "rh_admin")),
-    ],
 )
 
 
 @router.get("", response_model=MarcacionesListadoResponse)
 def get_marcaciones(
     db: Annotated[Session, Depends(get_db)],
+    _access_scope: Annotated[
+        AccessScope,
+        Depends(
+            require_module_access(
+                "CHECADAS_CRUDAS",
+                "consultar",
+            )
+        ),
+    ],
     fecha: Annotated[date | None, Query(description="Fecha de marcaciones en formato YYYY-MM-DD")] = None,
     q: Annotated[str | None, Query(description="Búsqueda por empleado, ZK user ID o dispositivo")] = None,
     dispositivo_id: Annotated[int | None, Query(description="Filtro por dispositivo")] = None,

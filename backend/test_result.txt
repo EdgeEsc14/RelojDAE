@@ -1,0 +1,10 @@
+﻿.\.v_relojdae\Scripts\python.exe : 
+C:\RelojChecador\backend\.v_relojdae\Scripts\python.exe: can't open file 
+'C:\\RelojChecador\\backend\\test_reportes.py': [Errno 2] No such file or directory
+En línea: 1 Carácter: 33
++ ... \backend" ; .\.v_relojdae\Scripts\python.exe test_reportes.py 2>&1 |  ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (C:\RelojChecado...le or directory:Strin 
+   g) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 

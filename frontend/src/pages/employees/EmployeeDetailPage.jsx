@@ -23,7 +23,7 @@ import { empleadosApi } from "../../api/empleadosApi";
 import { catalogosApi } from "../../api/catalogosApi";
 import { asistenciaApi } from "../../api/asistenciaApi";
 import {
-  ACCESS_LEVELS,
+  DATA_SCOPES,
   MODULES,
 } from "../../constants/permissions";
 
@@ -589,15 +589,14 @@ function EmployeeDetailPage() {
    * de su propio departamento.
    */
   const canViewEmployee =
-    employeeAccess === ACCESS_LEVELS.TOTAL ||
-    employeeAccess === ACCESS_LEVELS.LECTURA ||
+    employeeAccess === DATA_SCOPES.TOTAL ||
     (
-      employeeAccess === ACCESS_LEVELS.AREA &&
+      employeeAccess === DATA_SCOPES.AREA &&
       Number(employee.departmentId) ===
         Number(currentDepartmentId)
     ) ||
     (
-      employeeAccess === ACCESS_LEVELS.PROPIO &&
+      employeeAccess === DATA_SCOPES.PROPIO &&
       Number(employee.id) ===
         Number(currentEmployeeId)
     );
@@ -686,7 +685,7 @@ function EmployeeDetailPage() {
    * empleados cuando implementemos la pantalla de edición.
    */
   const canManageEmployee =
-    employeeAccess === ACCESS_LEVELS.TOTAL;
+    employeeAccess === DATA_SCOPES.TOTAL;
 
   return (
     <div className="page-stack">

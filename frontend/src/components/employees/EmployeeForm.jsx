@@ -159,28 +159,28 @@ function buildEmployeeCreatePayload(
 
 function buildAltaIntegralPayload(form) {
   return {
-    nombres: form.nombres.trim(),
+    nombres: normalizeName(form.firstNames),
 
-    apellido_paterno:
-      form.apellidoPaterno.trim(),
+    apellido_paterno: normalizeName(
+      form.paternalSurname,
+    ),
 
     apellido_materno:
-      form.apellidoMaterno?.trim() || null,
+      form.maternalSurname.trim()
+        ? normalizeName(form.maternalSurname)
+        : null,
 
     rfc:
       form.rfc.trim().toUpperCase(),
 
-    curp:
-      form.curp?.trim().toUpperCase() || null,
+    curp: null,
 
-    telefono:
-      form.telefono?.trim() || null,
+    telefono: null,
 
     correo_personal:
-      form.correoPersonal.trim().toLowerCase(),
+      form.email.trim().toLowerCase(),
 
-    tipo_contratacion_id:
-      Number(form.tipoContratacionId),
+    tipo_contratacion_id: 8,
 
     fecha_ingreso:
       form.fechaIngreso,
@@ -189,7 +189,10 @@ function buildAltaIntegralPayload(form) {
       Number(form.positionId),
 
     unidad_organizacional_id:
-      Number(form.departmentId),
+      Number(
+        form.departmentId ||
+        form.mainUnitId
+      ),
 
     supervisor_id:
       form.supervisorId === "none" ||
@@ -201,11 +204,13 @@ function buildAltaIntegralPayload(form) {
       Number(form.scheduleId),
 
     observaciones:
-      form.observaciones?.trim() || null,
+      null,
 
-    registrar_en_reloj: true,
+    registrar_en_reloj:
+      true,
 
-    todos_dispositivos_activos: true,
+    todos_dispositivos_activos:
+      true,
 
     dispositivo_ids: [],
   };
@@ -1283,17 +1288,6 @@ function EmployeeForm({
 
       const savedEmployeeFromApi =
         mapSavedEmployeeFromApi(createdEmployee, form);
-
-      const schedulePayload =
-        buildEmployeeSchedulePayload(form);
-
-
-
-      const devicePayload = buildEmployeeDevicePayload(
-        form,
-        savedEmployeeFromApi,
-      );
-
 
       setSavedEmployee(savedEmployeeFromApi);
 

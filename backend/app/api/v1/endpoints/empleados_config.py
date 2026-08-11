@@ -3,6 +3,8 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.core.access_control import AccessScope
+from app.core.auth_dependencies import require_module_access
 from app.core.database import get_db
 from app.repositories.empleados_config_repo import (
     asignar_dispositivo_empleado,
@@ -17,14 +19,11 @@ from app.schemas.empleados_config import (
     DispositivoEmpleadoResponse,
     UsuarioSistemaEmpleadoResponse,
 )
-from app.core.auth_dependencies import require_roles
+
 
 router = APIRouter(
     prefix="/empleados",
     tags=["Empleados - Configuración"],
-    dependencies=[
-        Depends(require_roles("super_admin", "rh_admin")),
-    ],
 )
 
 
@@ -37,6 +36,15 @@ def post_asignar_horario_empleado(
     codigo_empleado: str,
     payload: AsignarHorarioEmpleadoRequest,
     db: Annotated[Session, Depends(get_db)],
+    _access_scope: Annotated[
+        AccessScope,
+        Depends(
+            require_module_access(
+                "EMPLEADOS",
+                "editar",
+            )
+        ),
+    ],
 ) -> dict:
     try:
         asignacion = asignar_horario_empleado(
@@ -69,6 +77,15 @@ def post_asignar_dispositivo_empleado(
     codigo_empleado: str,
     payload: AsignarDispositivoEmpleadoRequest,
     db: Annotated[Session, Depends(get_db)],
+    _access_scope: Annotated[
+        AccessScope,
+        Depends(
+            require_module_access(
+                "EMPLEADOS",
+                "editar",
+            )
+        ),
+    ],
 ) -> dict:
     try:
         asignacion = asignar_dispositivo_empleado(
@@ -101,6 +118,15 @@ def post_crear_usuario_sistema_empleado(
     codigo_empleado: str,
     payload: CrearUsuarioSistemaEmpleadoRequest,
     db: Annotated[Session, Depends(get_db)],
+    _access_scope: Annotated[
+        AccessScope,
+        Depends(
+            require_module_access(
+                "SEGURIDAD",
+                "crear",
+            )
+        ),
+    ],
 ) -> dict:
     try:
         usuario = crear_usuario_sistema_empleado(

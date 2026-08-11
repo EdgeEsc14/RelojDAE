@@ -615,6 +615,99 @@ def obtener_dashboard_resumen(
         ).mappings().all()
     )
 
+    # ============================================================
+    # Tendencia de puntualidad últimos 30 días (para AreaChart)
+    # ============================================================
+    tendencia_puntualidad_query = text(
+        """
+        WITH fechas AS (
+            SELECT generate_series(
+                CURRENT_DATE - INTERVAL '29 days',
+                CURRENT_DATE,
+                INTERVAL '1 day'
+            )::date AS fecha
+        ),
+
+        asistencias_permitidas AS (
+            SELECT ad.*
+            FROM asistencia.asistencias_diarias ad
+            WHERE ad.empleado_id = ANY(
+                CAST(:allowed_employee_ids AS BIGINT[])
+            )
+        )
+
+        SELECT
+            f.fecha::text AS fecha,
+            COUNT(ad.id) AS total,
+            COUNT(ad.id) FILTER (
+                WHERE ad.estatus = 'COMPLETO'
+            ) AS completos,
+            COUNT(ad.id) FILTER (
+                WHERE ad.estatus IN ('RETARDO_MENOR', 'RETARDO_MAYOR')
+            ) AS retardos,
+            COUNT(ad.id) FILTER (
+                WHERE ad.estatus = 'FALTA'
+            ) AS faltas,
+            CASE
+                WHEN COUNT(ad.id) > 0
+                THEN ROUND(
+                    COUNT(ad.id) FILTER (WHERE ad.estatus = 'COMPLETO')::numeric
+                    / COUNT(ad.id) * 100,
+                    1
+                )
+                ELSE 0
+            END AS pct_puntualidad,
+            CASE
+                WHEN COUNT(ad.id) > 0
+                THEN ROUND(
+                    (COUNT(ad.id) FILTER (WHERE ad.estatus = 'COMPLETO')
+                     + COUNT(ad.id) FILTER (WHERE ad.estatus IN ('RETARDO_MENOR', 'RETARDO_MAYOR'))
+                    )::numeric
+                    / COUNT(ad.id) * 100,
+                    1
+                )
+                ELSE 0
+            END AS pct_asistencia
+        FROM fechas f
+        LEFT JOIN asistencias_permitidas ad ON ad.fecha = f.fecha
+        GROUP BY f.fecha
+        ORDER BY f.fecha
+        """
+    )
+
+    tendencia_puntualidad = (
+        db.execute(
+            tendencia_puntualidad_query,
+            params,
+        ).mappings().all()
+    )
+
+    # ============================================================
+    # Distribución de incidencias por categoría (para PieChart)
+    # ============================================================
+    incidencias_por_categoria_query = text(
+        f"""
+        SELECT
+            ti.categoria,
+            ti.nombre AS tipo_nombre,
+            COUNT(i.id) AS cantidad
+        FROM asistencia.incidencias i
+        INNER JOIN asistencia.tipos_incidencia ti ON ti.id = i.tipo_incidencia_id
+        INNER JOIN personal.empleados e ON e.id = i.empleado_id
+        WHERE i.fecha >= (CURRENT_DATE - INTERVAL '29 days')
+          AND {employee_filter}
+        GROUP BY ti.categoria, ti.nombre
+        ORDER BY cantidad DESC
+        """
+    )
+
+    incidencias_por_categoria = (
+        db.execute(
+            incidencias_por_categoria_query,
+            params,
+        ).mappings().all()
+    )
+
     return {
         "empleados": {
             "total": empleados.get("total", 0),
@@ -769,5 +862,29 @@ def obtener_dashboard_resumen(
                 ),
             }
             for row in departamentos_incidencias
+        ],
+        "tendencia_puntualidad": [
+            {
+                "fecha": row["fecha"],
+                "total": row["total"],
+                "completos": row["completos"],
+                "retardos": row["retardos"],
+                "faltas": row["faltas"],
+                "pct_puntualidad": float(
+                    row["pct_puntualidad"]
+                ),
+                "pct_asistencia": float(
+                    row["pct_asistencia"]
+                ),
+            }
+            for row in tendencia_puntualidad
+        ],
+        "incidencias_por_categoria": [
+            {
+                "categoria": row["categoria"],
+                "tipo_nombre": row["tipo_nombre"],
+                "cantidad": row["cantidad"],
+            }
+            for row in incidencias_por_categoria
         ],
     }

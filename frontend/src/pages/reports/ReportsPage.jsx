@@ -1,45 +1,51 @@
 import { Link } from "react-router-dom";
 import {
   BarChart3,
-  Download,
   FileSpreadsheet,
   FileText,
-  Search,
-  SlidersHorizontal,
+  Users,
 } from "lucide-react";
 
 import PageHeader from "../../components/layout/PageHeader";
-import { mockReportCards } from "../../data/mockReports";
+
+const reportCards = [
+  {
+    id: "employee",
+    title: "Reporte individual por empleado",
+    description:
+      "Detalle diario de asistencia, retardos, faltas, puntos y horas trabajadas.",
+    path: "/reports/department",
+    category: "Operativo",
+    icon: FileText,
+  },
+  {
+    id: "department",
+    title: "Reporte por departamento",
+    description:
+      "Concentrado de empleados, faltas, retardos y tiempo extra por área.",
+    path: "/reports/department",
+    category: "Consolidado",
+    icon: Users,
+  },
+];
 
 function ReportsPage() {
   return (
     <div className="page-stack">
       <PageHeader
         title="Reportes"
-        description="Centro de reportes operativos, administrativos, consolidados y de auditoría."
-      >
-        <div className="header-actions">
-          <button className="secondary-button" type="button">
-            <Download size={17} />
-            Exportaciones
-          </button>
+        description="Centro de reportes con exportación a CSV y PDF."
+      />
 
-          <button className="primary-button" type="button">
-            <FileText size={17} />
-            Generar reporte
-          </button>
-        </div>
-      </PageHeader>
-
-      <section className="metrics-grid four-columns">
+      <section className="metrics-grid three-columns">
         <article className="metric-card">
           <div className="metric-icon">
             <FileText size={22} />
           </div>
           <div>
-            <p>Reportes disponibles</p>
-            <strong>4</strong>
-            <span>Plantillas principales</span>
+            <p>Tipos de reporte</p>
+            <strong>2</strong>
+            <span>Individual y departamental</span>
           </div>
         </article>
 
@@ -49,8 +55,8 @@ function ReportsPage() {
           </div>
           <div>
             <p>Formatos</p>
-            <strong>PDF / Excel</strong>
-            <span>Exportación operativa</span>
+            <strong>CSV / PDF</strong>
+            <span>Descarga directa</span>
           </div>
         </article>
 
@@ -59,51 +65,47 @@ function ReportsPage() {
             <BarChart3 size={22} />
           </div>
           <div>
-            <p>Periodo activo</p>
-            <strong>Mayo 2026</strong>
-            <span>01/05/2026 - 15/05/2026</span>
-          </div>
-        </article>
-
-        <article className="metric-card">
-          <div className="metric-icon">
-            <Download size={22} />
-          </div>
-          <div>
-            <p>Exportaciones</p>
-            <strong>12</strong>
-            <span>Generadas este mes</span>
+            <p>Alcance</p>
+            <strong>Por periodo</strong>
+            <span>Selecciona rango de fechas</span>
           </div>
         </article>
       </section>
 
       <section className="panel-card">
-        <div className="filters-row">
-          <div className="filter-search">
-            <Search size={18} />
-            <input type="text" placeholder="Buscar reporte por nombre, módulo o categoría..." />
+        <div className="panel-header">
+          <div>
+            <h3>Reportes disponibles</h3>
+            <p>Selecciona un tipo de reporte para generar.</p>
           </div>
-
-          <button className="secondary-button" type="button">
-            <SlidersHorizontal size={17} />
-            Filtros
-          </button>
         </div>
 
         <div className="report-card-grid">
-          {mockReportCards.map((report) => (
-            <Link className="report-card" to={report.path} key={report.id}>
-              <div className="report-card-icon">
-                <FileText size={24} />
-              </div>
+          {reportCards.map((report) => {
+            const Icon = report.icon;
+            return (
+              <Link className="report-card" to={report.path} key={report.id}>
+                <div className="report-card-icon">
+                  <Icon size={24} />
+                </div>
 
-              <div>
-                <span className="badge neutral">{report.category}</span>
-                <h3>{report.title}</h3>
-                <p>{report.description}</p>
-              </div>
-            </Link>
-          ))}
+                <div>
+                  <span className="badge neutral">{report.category}</span>
+                  <h3>{report.title}</h3>
+                  <p>{report.description}</p>
+                </div>
+              </Link>
+            );
+          })}
+        </div>
+
+        <div className="report-instructions">
+          <h4>Reporte individual por empleado</h4>
+          <p>
+            Para generar un reporte individual, navega al detalle de un empleado
+            desde la sección de Empleados y utiliza la opción "Generar reporte",
+            o accede directamente a <code>/reports/employee/CODIGO_EMPLEADO</code>.
+          </p>
         </div>
       </section>
     </div>

@@ -97,6 +97,21 @@ class DashboardDepartamentoIncidencias(BaseModel):
     total_incidencias: int
     empleados_involucrados: int
 
+class DashboardTendenciaPuntualidad(BaseModel):
+    fecha: str
+    total: int
+    completos: int
+    retardos: int
+    faltas: int
+    pct_puntualidad: float
+    pct_asistencia: float
+
+
+class DashboardIncidenciaCategoria(BaseModel):
+    categoria: str
+    tipo_nombre: str
+    cantidad: int
+
 
 class DashboardResumenResponse(BaseModel):
     empleados: DashboardEmpleadosResumen
@@ -106,8 +121,18 @@ class DashboardResumenResponse(BaseModel):
     asistencia_hoy: DashboardAsistenciaHoyResumen
     alertas: DashboardAlertasResumen
     asistencia_ultimos_dias: list[DashboardAsistenciaDiaSerie]
+
     top_empleados_faltas: list[DashboardTopEmpleadoFaltas]
     top_empleados_retardos: list[DashboardTopEmpleadoRetardos]
+
     departamentos_incidencias: list[
         DashboardDepartamentoIncidencias
+    ]
+
+    tendencia_puntualidad: list[
+        DashboardTendenciaPuntualidad
+    ]
+
+    incidencias_por_categoria: list[
+        DashboardIncidenciaCategoria
     ]

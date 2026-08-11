@@ -3346,3 +3346,270 @@ a {
 .ranking-bar.incidence {
   background: #7c3aed;
 }
+
+
+/* =========================================
+   MODAL OVERLAY (Usuarios del Sistema)
+   ========================================= */
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(2px);
+
+  padding: 20px;
+}
+
+.modal-overlay .modal-content {
+  position: relative;
+  width: 100%;
+  max-width: 520px;
+  max-height: 90vh;
+  overflow-y: auto;
+
+  background: #ffffff;
+  border-radius: 14px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
+
+  padding: 0;
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+
+  padding: 20px 24px;
+  border-bottom: 1px solid #ece7e9;
+}
+
+.modal-header h3 {
+  margin: 0;
+  font-size: 1.1rem;
+  color: #1a1a2e;
+}
+
+.modal-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  width: 32px;
+  height: 32px;
+
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: #6b7280;
+  cursor: pointer;
+}
+
+.modal-close:hover {
+  background: #f3f4f6;
+  color: #1a1a2e;
+}
+
+.modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+
+  padding: 24px;
+}
+
+.modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+
+  padding-top: 16px;
+  border-top: 1px solid #ece7e9;
+}
+
+/* =========================================
+   FORM FIELDS (Modal)
+   ========================================= */
+
+.form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.form-field label {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #475467;
+}
+
+.form-field input,
+.form-field select {
+  height: 40px;
+  padding: 0 12px;
+
+  border: 1px solid #d8d1d4;
+  border-radius: 8px;
+
+  font-family: inherit;
+  font-size: 0.9rem;
+  color: #1a1a2e;
+  background: #ffffff;
+
+  transition: border-color 0.15s;
+}
+
+.form-field input:focus,
+.form-field select:focus {
+  outline: none;
+  border-color: #9b2457;
+  box-shadow: 0 0 0 3px rgba(155, 36, 87, 0.08);
+}
+
+.form-field input::placeholder {
+  color: #9ca3af;
+}
+
+.form-checkbox {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
+.form-checkbox label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.form-checkbox input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  accent-color: #9b2457;
+}
+
+.form-error-message {
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #dc2626;
+  font-size: 0.85rem;
+}
+
+/* =========================================
+   TABLE ACTIONS GROUP
+   ========================================= */
+
+.table-actions-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.table-action.danger {
+  color: #dc2626;
+}
+
+.table-action.danger:hover {
+  color: #b91c1c;
+  background: #fef2f2;
+}
+
+
+/* =========================================
+   DASHBOARD ALERTS
+   ========================================= */
+
+.alert-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.alert-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+
+  padding: 12px 16px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+}
+
+.alert-item.warning {
+  background: #fffbeb;
+  border-color: #fde68a;
+  color: #92400e;
+}
+
+.alert-item.danger {
+  background: #fef2f2;
+  border-color: #fecaca;
+  color: #991b1b;
+}
+
+.alert-item.info {
+  background: #eff6ff;
+  border-color: #bfdbfe;
+  color: #1e40af;
+}
+
+.alert-item div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.alert-item strong {
+  font-size: 1.1rem;
+  line-height: 1;
+}
+
+.alert-item span {
+  font-size: 0.8rem;
+  opacity: 0.85;
+}
+
+.ranking-value {
+  font-size: 1.2rem;
+}
+
+.ranking-value.danger {
+  color: #ef4444;
+}
+
+.ranking-value.warning {
+  color: #f59e0b;
+}
+
+
+/* =========================================
+   CHART CONTAINERS (Recharts)
+   ========================================= */
+
+.chart-container {
+  width: 100%;
+  overflow-x: auto;
+  display: flex;
+  justify-content: center;
+  padding: 8px 0;
+}
+
+.chart-container svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.chart-container.chart-wide svg {
+  min-width: 700px;
+}

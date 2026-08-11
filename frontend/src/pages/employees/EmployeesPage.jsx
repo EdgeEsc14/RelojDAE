@@ -16,7 +16,7 @@ import {
 import PageHeader from "../../components/layout/PageHeader";
 
 import {
-  ACCESS_LEVELS,
+  DATA_SCOPES,
   MODULES,
 } from "../../constants/permissions";
 
@@ -24,7 +24,7 @@ import { useAuth } from "../../context/AuthContext";
 /* Esta cosa solamente era de prueba 
 import { mockEmployees } from "../../data/mockEmployees";*/
 import { empleadosApi } from "../../api/empleadosApi";
-import { getModuleAccess } from "../../utils/permissions";
+import { getModuleAccess, canCreate } from "../../utils/permissions";
 
 function getStatusClass(status) {
   if (status === "Activo") return "badge success";
@@ -349,20 +349,19 @@ function EmployeesPage() {
   const scopedEmployees = useMemo(() => {
     return employees.filter((employee) => {
       if (
-        employeeAccess === ACCESS_LEVELS.TOTAL ||
-        employeeAccess === ACCESS_LEVELS.LECTURA
+        employeeAccess === DATA_SCOPES.TOTAL
       ) {
         return true;
       }
 
-      if (employeeAccess === ACCESS_LEVELS.AREA) {
+      if (employeeAccess === DATA_SCOPES.AREA) {
         return (
           Number(employee.departmentId) ===
           Number(currentDepartmentId)
         );
       }
 
-      if (employeeAccess === ACCESS_LEVELS.PROPIO) {
+      if (employeeAccess === DATA_SCOPES.PROPIO) {
         return (
           Number(employee.id) ===
           Number(currentEmployeeId)
@@ -536,7 +535,7 @@ function EmployeesPage() {
   );
 
   const canCreateEmployee =
-    employeeAccess === ACCESS_LEVELS.TOTAL;
+    canCreate(user?.role, MODULES.EMPLEADOS);
 
   const activeFilterCount = [
     selectedDepartment !== "todos",

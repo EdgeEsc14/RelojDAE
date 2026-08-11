@@ -8,7 +8,10 @@ from app.api.v1.endpoints import (
     empleados_config,
     health,
     horarios,
+    incidencias,
     marcaciones,
+    reportes,
+    usuarios,
 )
 
 router = APIRouter()
@@ -21,3 +24,6 @@ router.include_router(asistencia.router)
 router.include_router(marcaciones.router)
 router.include_router(catalogos.router)
 router.include_router(horarios.router)
+router.include_router(usuarios.router)
+router.include_router(reportes.router)
+router.include_router(incidencias.router)
