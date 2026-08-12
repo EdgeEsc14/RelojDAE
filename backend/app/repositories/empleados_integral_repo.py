@@ -254,7 +254,9 @@ def crear_alta_integral_empleado(
 
         if dispositivos:
             zk_user_id = (
-                _generar_siguiente_zk_user_id(db)
+                payload.zk_user_id
+                if payload.zk_user_id
+                else _generar_siguiente_zk_user_id(db)
             )
 
             nombre_dispositivo = (

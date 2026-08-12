@@ -368,7 +368,7 @@ def _sincronizar_relacion(
                 UPDATE dispositivos.dispositivos
                 SET
                     ultima_conexion = CURRENT_TIMESTAMP,
-                    ultima_sincronizacion =
+                    ultima_sincronizacion_marcaciones =
                         CURRENT_TIMESTAMP,
                     fecha_modificacion = CURRENT_TIMESTAMP
                 WHERE id = :dispositivo_id

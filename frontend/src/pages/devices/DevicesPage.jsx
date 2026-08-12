@@ -1,211 +1,331 @@
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
 import ZkUsersPanel from "../../components/devices/ZkUsersPanel";
 import ZkReconciliationPanel from "../../components/devices/ZkReconciliationPanel";
-/*import ZkAttendanceRawPanel from "../../components/devices/ZkAttendanceRawPanel";
 
-Esta mal esta ruta */ 
 import {
-  Activity,
-  Database,
+  Check,
+  Clock,
   Eye,
   Fingerprint,
+  Loader,
   Plus,
   RefreshCcw,
   Search,
   Server,
-  SlidersHorizontal,
   Wifi,
   WifiOff,
+  X,
 } from "lucide-react";
 
 import PageHeader from "../../components/layout/PageHeader";
-import { mockDevices } from "../../data/mockDevices";
-import ZkTimeSyncPanel from "../../components/devices/ZkTimeSyncPanel";
-function getDeviceStatusClass(status) {
-  if (status === "Conectado") return "badge success";
-  if (status === "Revisar") return "badge warning";
-  if (status === "Desconectado") return "badge danger";
-  return "badge neutral";
+import {
+  getDispositivos,
+  crearDispositivo,
+  probarConexion,
+  probarConexionLibre,
+  sincronizarHora,
+} from "../../api/dispositivosApi";
+
+function getStatusClass(estado) {
+  if (estado === "CONECTADO") return "badge success";
+  if (estado === "ERROR") return "badge danger";
+  if (estado === "DESHABILITADO") return "badge neutral";
+  return "badge warning";
+}
+
+function getStatusLabel(estado) {
+  const labels = {
+    CONECTADO: "Conectado",
+    DESCONECTADO: "Desconectado",
+    ERROR: "Error",
+    DESHABILITADO: "Deshabilitado",
+  };
+  return labels[estado] || estado || "Desconocido";
+}
+
+function formatDateTime(value) {
+  if (!value) return "Nunca";
+  try {
+    return new Date(value).toLocaleString("es-MX", {
+      day: "2-digit", month: "short", year: "numeric",
+      hour: "2-digit", minute: "2-digit",
+    });
+  } catch { return value; }
 }
 
 function DevicesPage() {
-  const connected = mockDevices.filter(
-    (device) => device.status === "Conectado"
-  ).length;
+  const [dispositivos, setDispositivos] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [probando, setProbando] = useState(null);
 
-  const warning = mockDevices.filter((device) => device.status === "Revisar").length;
+  // Modal crear
+  const [showModal, setShowModal] = useState(false);
+  const [formData, setFormData] = useState({ nombre: "", ip: "", puerto: 4370, password_comunicacion: 0, ubicacion: "", codigo: "" });
+  const [formError, setFormError] = useState("");
+  const [formLoading, setFormLoading] = useState(false);
+  const [testResult, setTestResult] = useState(null);
 
-  const disconnected = mockDevices.filter(
-    (device) => device.status === "Desconectado"
-  ).length;
+  useEffect(() => { loadDispositivos(); }, []);
 
-  const totalPunches = mockDevices.reduce(
-    (sum, device) => sum + device.punchesRead,
-    0
-  );
+  async function loadDispositivos() {
+    setLoading(true);
+    setError("");
+    try {
+      const data = await getDispositivos();
+      setDispositivos(data || []);
+    } catch (err) {
+      setError(err.message || "Error al cargar dispositivos.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleProbarConexion(id) {
+    setProbando(id);
+    try {
+      await probarConexion(id);
+      loadDispositivos();
+    } catch (err) {
+      alert("Error: " + err.message);
+    } finally {
+      setProbando(null);
+    }
+  }
+
+  async function handleSyncHora(id) {
+    try {
+      await sincronizarHora(id, true);
+      loadDispositivos();
+    } catch (err) {
+      alert("Error sync hora: " + err.message);
+    }
+  }
+
+  async function handleTestBeforeSave() {
+    setTestResult(null);
+    try {
+      const result = await probarConexionLibre({
+        ip: formData.ip,
+        puerto: Number(formData.puerto),
+        password_comunicacion: Number(formData.password_comunicacion),
+      });
+      setTestResult(result);
+    } catch (err) {
+      setTestResult({ ok: false, error: err.message });
+    }
+  }
+
+  async function handleCreate(e) {
+    e.preventDefault();
+    setFormError("");
+    setFormLoading(true);
+    try {
+      if (!formData.nombre) { setFormError("Nombre obligatorio."); setFormLoading(false); return; }
+      if (!formData.ip) { setFormError("IP obligatoria."); setFormLoading(false); return; }
+      await crearDispositivo({
+        ...formData,
+        puerto: Number(formData.puerto),
+        password_comunicacion: Number(formData.password_comunicacion),
+      });
+      setShowModal(false);
+      setTestResult(null);
+      loadDispositivos();
+    } catch (err) {
+      setFormError(err.message || "Error al crear.");
+    } finally {
+      setFormLoading(false);
+    }
+  }
+
+  const connected = dispositivos.filter((d) => d.estado_conexion === "CONECTADO").length;
+  const withIssues = dispositivos.filter((d) => d.estado_conexion === "ERROR" || d.estado_conexion === "DESCONECTADO").length;
 
   return (
     <div className="page-stack">
       <PageHeader
         title="Dispositivos ZKTeco"
-        description="Administración visual de relojes checadores, conexión pyzk, sincronización y estado operativo."
+        description="Administración de relojes checadores, conexión, sincronización y estado operativo."
       >
         <div className="header-actions">
-          <button className="secondary-button" type="button">
-            <RefreshCcw size={17} />
-            Sincronizar todos
-          </button>
-
-          <button className="primary-button" type="button">
+          <button className="primary-button" type="button" onClick={() => setShowModal(true)}>
             <Plus size={17} />
-            Nuevo dispositivo
+            Agregar dispositivo
           </button>
         </div>
       </PageHeader>
 
-      <section className="metrics-grid four-columns">
+      {/* Métricas */}
+      <section className="metrics-grid three-columns">
         <article className="metric-card">
-          <div className="metric-icon">
-            <Server size={22} />
-          </div>
+          <div className="metric-icon"><Server size={22} /></div>
           <div>
             <p>Dispositivos</p>
-            <strong>{mockDevices.length}</strong>
-            <span>Relojes registrados</span>
+            <strong>{dispositivos.length}</strong>
+            <span>Registrados</span>
           </div>
         </article>
-
         <article className="metric-card">
-          <div className="metric-icon">
-            <Wifi size={22} />
-          </div>
+          <div className="metric-icon"><Wifi size={22} /></div>
           <div>
             <p>Conectados</p>
             <strong>{connected}</strong>
             <span>Responden correctamente</span>
           </div>
         </article>
-
         <article className="metric-card">
-          <div className="metric-icon">
-            <WifiOff size={22} />
-          </div>
+          <div className="metric-icon"><WifiOff size={22} /></div>
           <div>
-            <p>Con alerta</p>
-            <strong>{warning + disconnected}</strong>
+            <p>Con problema</p>
+            <strong>{withIssues}</strong>
             <span>Requieren revisión</span>
           </div>
         </article>
-
-        <article className="metric-card">
-          <div className="metric-icon">
-            <Database size={22} />
-          </div>
-          <div>
-            <p>Checadas leídas</p>
-            <strong>{totalPunches}</strong>
-            <span>Histórico visible</span>
-          </div>
-        </article>
       </section>
 
-      <section className="panel-card">
-        <div className="filters-row">
-          <div className="filter-search">
-            <Search size={18} />
-            <input
-              type="text"
-              placeholder="Buscar por nombre, IP, serie, ubicación o estatus..."
-            />
+      {error && <div className="panel-card"><div className="empty-state"><p>{error}</p></div></div>}
+      {loading && <div className="panel-card"><div className="empty-state"><p>Cargando dispositivos...</p></div></div>}
+
+      {/* Tarjetas de dispositivos */}
+      {!loading && dispositivos.length > 0 && (
+        <section className="panel-card">
+          <div className="device-card-grid">
+            {dispositivos.map((device) => (
+              <article className="device-card" key={device.id}>
+                <div className="device-card-header">
+                  <div className="device-card-icon"><Fingerprint size={26} /></div>
+                  <div>
+                    <h3>{device.nombre}</h3>
+                    <p>{device.ubicacion || "Sin ubicación"}</p>
+                  </div>
+                  <span className={getStatusClass(device.estado_conexion)}>
+                    {getStatusLabel(device.estado_conexion)}
+                  </span>
+                </div>
+
+                <div className="device-info-grid">
+                  <div><span>IP</span><strong>{device.ip}</strong></div>
+                  <div><span>Puerto</span><strong>{device.puerto}</strong></div>
+                  <div><span>Modelo</span><strong>{device.modelo || "—"}</strong></div>
+                  <div><span>Firmware</span><strong>{device.firmware || "—"}</strong></div>
+                  <div><span>Serie</span><strong>{device.numero_serie || "—"}</strong></div>
+                  <div><span>Activo</span><strong>{device.activo ? "Sí" : "No"}</strong></div>
+                </div>
+
+                <div className="device-card-footer">
+                  <div>
+                    <span>Última conexión</span>
+                    <strong>{formatDateTime(device.ultima_conexion)}</strong>
+                  </div>
+                  <div>
+                    <span>Hora</span>
+                    <strong>{
+                      device.ultimo_resultado_hora === "HORA_OK" || device.ultimo_resultado_hora === "SINCRONIZADA"
+                        ? "Sincronizada"
+                        : device.ultimo_desfase_segundos != null
+                          ? `Desfase ${device.ultimo_desfase_segundos > 0 ? "+" : ""}${device.ultimo_desfase_segundos}s`
+                          : "Sin verificar"
+                    }</strong>
+                  </div>
+                  <div className="table-actions-group">
+                    <button
+                      className="secondary-button"
+                      type="button"
+                      disabled={probando === device.id}
+                      onClick={() => handleProbarConexion(device.id)}
+                    >
+                      {probando === device.id ? <Loader size={14} /> : <Wifi size={14} />}
+                    </button>
+                    <button
+                      className="secondary-button"
+                      type="button"
+                      onClick={() => handleSyncHora(device.id)}
+                      title="Sincronizar hora"
+                    >
+                      <Clock size={14} />
+                    </button>
+                    <Link className="primary-button link-button" to={`/devices/${device.id}`}>
+                      <Eye size={14} /> Detalle
+                    </Link>
+                  </div>
+                </div>
+              </article>
+            ))}
           </div>
+        </section>
+      )}
 
-          <button className="secondary-button" type="button">
-            <SlidersHorizontal size={17} />
-            Filtros
-          </button>
-        </div>
+      {!loading && dispositivos.length === 0 && !error && (
+        <div className="panel-card"><div className="empty-state"><p>No hay dispositivos registrados.</p></div></div>
+      )}
 
-        <div className="device-card-grid">
-          {mockDevices.map((device) => (
-            <article className="device-card" key={device.id}>
-              <div className="device-card-header">
-                <div className="device-card-icon">
-                  <Fingerprint size={26} />
-                </div>
-
-                <div>
-                  <h3>{device.name}</h3>
-                  <p>{device.location}</p>
-                </div>
-
-                <span className={getDeviceStatusClass(device.status)}>
-                  {device.status}
-                </span>
-              </div>
-
-              <div className="device-info-grid">
-                <div>
-                  <span>IP</span>
-                  <strong>{device.ipAddress}</strong>
-                </div>
-
-                <div>
-                  <span>Puerto</span>
-                  <strong>{device.port}</strong>
-                </div>
-
-                <div>
-                  <span>Modelo</span>
-                  <strong>{device.model}</strong>
-                </div>
-
-                <div>
-                  <span>Modo</span>
-                  <strong>{device.syncMode}</strong>
-                </div>
-
-                <div>
-                  <span>Usuarios</span>
-                  <strong>{device.usersRead}</strong>
-                </div>
-
-                <div>
-                  <span>Checadas</span>
-                  <strong>{device.punchesRead}</strong>
-                </div>
-              </div>
-
-              <div className="device-card-footer">
-                <div>
-                  <span>Última sincronización</span>
-                  <strong>{device.lastSyncAt}</strong>
-                </div>
-
-                <Link className="primary-button link-button" to={`/devices/${device.id}`}>
-                  <Eye size={16} />
-                  Ver detalle
-                </Link>
-              </div>
-            </article>
-          ))}
-        </div>
-      </section>
-
-      <section className="warning-banner">
-        <Activity size={22} />
-        <div>
-          <strong>Comunicación por pyzk</strong>
-          <p>
-            La vista está preparada para que el backend ejecute pruebas de conexión,
-            lectura de usuarios y descarga de checadas mediante IP, puerto 4370 y
-            clave de comunicación del dispositivo.
-          </p>
-        </div>
-      </section>
-      <ZkTimeSyncPanel />
+      {/* Paneles funcionales existentes */}
       <ZkUsersPanel />
       <ZkReconciliationPanel />
+
+      {/* Modal crear dispositivo */}
+      {showModal && (
+        <div className="modal-overlay" onClick={() => setShowModal(false)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>Agregar dispositivo</h3>
+              <button className="modal-close" type="button" onClick={() => setShowModal(false)}><X size={20} /></button>
+            </div>
+            <form className="modal-body" onSubmit={handleCreate}>
+              {formError && <div className="form-error-message">{formError}</div>}
+
+              <div className="form-field">
+                <label>Nombre *</label>
+                <input type="text" required placeholder="Ej: Reloj acceso principal" value={formData.nombre} onChange={(e) => setFormData({...formData, nombre: e.target.value})} />
+              </div>
+              <div className="form-field">
+                <label>IP *</label>
+                <input type="text" required placeholder="10.254.26.251" value={formData.ip} onChange={(e) => setFormData({...formData, ip: e.target.value})} />
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"12px"}}>
+                <div className="form-field">
+                  <label>Puerto</label>
+                  <input type="number" value={formData.puerto} onChange={(e) => setFormData({...formData, puerto: e.target.value})} />
+                </div>
+                <div className="form-field">
+                  <label>Comm Key</label>
+                  <input type="number" value={formData.password_comunicacion} onChange={(e) => setFormData({...formData, password_comunicacion: e.target.value})} />
+                </div>
+              </div>
+              <div className="form-field">
+                <label>Ubicación</label>
+                <input type="text" placeholder="Ej: Entrada principal" value={formData.ubicacion} onChange={(e) => setFormData({...formData, ubicacion: e.target.value})} />
+              </div>
+              <div className="form-field">
+                <label>Código (opcional)</label>
+                <input type="text" placeholder="Se genera automáticamente" value={formData.codigo} onChange={(e) => setFormData({...formData, codigo: e.target.value})} />
+              </div>
+
+              <button className="secondary-button" type="button" onClick={handleTestBeforeSave} style={{width:"100%"}}>
+                <Wifi size={17} /> Probar conexión antes de guardar
+              </button>
+
+              {testResult && (
+                <div className={testResult.ok ? "form-error-message" : "form-error-message"} style={testResult.ok ? {background:"#f0fdf4",borderColor:"#86efac",color:"#166534"} : {}}>
+                  {testResult.ok
+                    ? `Conexión exitosa — Firmware: ${testResult.firmware || "N/D"}, Usuarios: ${testResult.total_usuarios}, Serie: ${testResult.numero_serie || "N/D"}`
+                    : `Error: ${testResult.error}`
+                  }
+                </div>
+              )}
+
+              <div className="modal-footer">
+                <button className="secondary-button" type="button" onClick={() => setShowModal(false)}>Cancelar</button>
+                <button className="primary-button" type="submit" disabled={formLoading}>
+                  {formLoading ? "Guardando..." : <><Check size={17} /> Guardar dispositivo</>}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

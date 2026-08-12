@@ -307,7 +307,7 @@ function EmployeesPage() {
         setIsLoadingEmployees(true);
         setEmployeesError("");
 
-        const data = await empleadosApi.listar();
+        const data = await empleadosApi.listar({ limit: 100 });
         /*Esta cosa es temporal solo para saber como esta
         console.log("Respuesta empleados API:", data);*/
         
@@ -561,6 +561,10 @@ function EmployeesPage() {
           <button
             className="secondary-button"
             type="button"
+            onClick={async () => {
+              try { await empleadosApi.exportarCSV(); }
+              catch (err) { alert("Error al exportar: " + err.message); }
+            }}
           >
             <Download size={17} />
             Exportar
@@ -859,10 +863,7 @@ function EmployeesPage() {
                       {employee.zkUserId ? (
                         <div className="table-stacked-cell">
                           <strong>{employee.zkUserId}</strong>
-
-                          {employee.device && (
-                            <span>{employee.device}</span>
-                          )}
+                          <span>{employee.device || "Reloj principal"}</span>
                         </div>
                       ) : (
                         <span className="muted-table-text">

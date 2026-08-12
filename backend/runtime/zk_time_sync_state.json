@@ -1,7 +1,7 @@
 {
-  "date": "2026-08-11",
-  "check_count": 8,
-  "last_checked_at": "2026-08-11T21:29:05",
-  "last_status": "TIME_CORRECTED",
-  "last_error": null
+  "date": "2026-08-12",
+  "check_count": 1,
+  "last_checked_at": "2026-08-12T17:48:03",
+  "last_status": "ERROR",
+  "last_error": "timed out"
 }

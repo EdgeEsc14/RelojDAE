@@ -267,7 +267,7 @@ def listar_dispositivos(
             ubicacion,
             activo,
             ultima_conexion,
-            ultima_sincronizacion
+            ultima_sincronizacion_marcaciones AS ultima_sincronizacion
         FROM dispositivos.dispositivos
         {where_sql}
         ORDER BY

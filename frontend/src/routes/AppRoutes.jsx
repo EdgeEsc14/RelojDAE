@@ -37,6 +37,8 @@ import DeviceDetailPage from "../pages/devices/DeviceDetailPage";
 
 import SchedulesPage from "../pages/schedules/SchedulesPage";
 
+import CalendarPage from "../pages/calendar/CalendarPage";
+
 import SystemUsersPage from "../pages/users/SystemUsersPage";
 
 import AuditPage from "../pages/audit/AuditPage";
@@ -251,6 +253,18 @@ function AppRoutes() {
               requiredModule={MODULES.HORARIOS}
             >
               <SchedulesPage />
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Calendario Laboral */}
+        <Route
+          path="/calendar"
+          element={
+            <ProtectedRoute
+              requiredModule={MODULES.HORARIOS}
+            >
+              <CalendarPage />
             </ProtectedRoute>
           }
         />

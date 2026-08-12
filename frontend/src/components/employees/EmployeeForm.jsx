@@ -19,6 +19,7 @@ import PageHeader from "../layout/PageHeader";
 import { empleadosApi } from "../../api/empleadosApi";
 
 import { catalogosApi } from "../../api/catalogosApi";
+import { horariosApi } from "../../api/horariosApi";
 import {
   getScheduleDescription,
 } from "../../data/mockCatalogs";
@@ -213,6 +214,9 @@ function buildAltaIntegralPayload(form) {
       true,
 
     dispositivo_ids: [],
+
+    zk_user_id:
+      form.zkUserId ? String(form.zkUserId).trim() : null,
   };
 }
 
@@ -1013,16 +1017,28 @@ function EmployeeForm({
     }));
   }
 
-  function suggestZkUserId() {
-    setForm((currentForm) => ({
-      ...currentForm,
-      zkUserId: suggestedZkUserId,
-    }));
-
-    setErrors((currentErrors) => ({
-      ...currentErrors,
-      zkUserId: undefined,
-    }));
+  async function suggestZkUserId() {
+    try {
+      const data = await empleadosApi.obtenerSiguienteZkUserId();
+      setForm((currentForm) => ({
+        ...currentForm,
+        zkUserId: data.zk_user_id || suggestedZkUserId,
+      }));
+      setErrors((currentErrors) => ({
+        ...currentErrors,
+        zkUserId: undefined,
+      }));
+    } catch {
+      // Fallback al cálculo local si el endpoint falla
+      setForm((currentForm) => ({
+        ...currentForm,
+        zkUserId: suggestedZkUserId,
+      }));
+      setErrors((currentErrors) => ({
+        ...currentErrors,
+        zkUserId: undefined,
+      }));
+    }
   }
   function openScheduleModal() {
     setScheduleForm(INITIAL_SCHEDULE_FORM);
@@ -1119,7 +1135,7 @@ function EmployeeForm({
     return validationErrors;
   }
 
-  function saveQuickSchedule() {
+  async function saveQuickSchedule() {
     const validationErrors = validateSchedule();
 
     if (Object.keys(validationErrors).length > 0) {
@@ -1127,42 +1143,48 @@ function EmployeeForm({
       return;
     }
 
-    const nextScheduleId =
-      Math.max(
-        0,
-        ...schedules.map((schedule) => schedule.id),
-      ) + 1;
+    // Crear horario en backend
+    try {
+      const dias_map = { "Lunes": 1, "Martes": 2, "Miércoles": 3, "Jueves": 4, "Viernes": 5, "Sábado": 6, "Domingo": 7 };
+      const dias_aplicables = scheduleForm.days.map(d => dias_map[d] || 0).filter(Boolean);
 
-    const orderedDays = WEEK_DAYS.filter((day) =>
-      scheduleForm.days.includes(day),
-    );
+      const payload = {
+        nombre: scheduleForm.name.trim(),
+        codigo: scheduleForm.name.trim().toUpperCase().replace(/\s+/g, "_").replace(/[^A-Z0-9_]/g, "").slice(0, 30),
+        hora_entrada: scheduleForm.startTime,
+        hora_salida: scheduleForm.endTime,
+        tolerancia_entrada_minutos: Number(scheduleForm.toleranceMinutes) || 10,
+        descanso_minutos: Number(scheduleForm.breakMinutes) || 0,
+        dias_aplicables: dias_aplicables,
+        permite_tiempo_extra: true,
+      };
 
-    const newSchedule = {
-      id: nextScheduleId,
-      name: scheduleForm.name.trim(),
-      days: orderedDays,
-      startTime: scheduleForm.startTime,
-      endTime: scheduleForm.endTime,
-      toleranceMinutes: Number(
-        scheduleForm.toleranceMinutes,
-      ),
-      breakMinutes: Number(
-        scheduleForm.breakMinutes,
-      ),
-      crossesMidnight:
-        scheduleForm.endTime < scheduleForm.startTime,
-      isActive: true,
-    };
+      const created = await horariosApi.crear(payload);
+      const newId = created?.id || created?.horario?.id;
 
-    setSchedules((currentSchedules) => [
-      ...currentSchedules,
-      newSchedule,
-    ]);
+      if (newId) {
+        // Recargar catálogo de horarios
+        const updatedSchedules = await catalogosApi.listarHorarios();
+        const scheduleArray = Array.isArray(updatedSchedules) ? updatedSchedules : (updatedSchedules?.items || []);
+        setSchedules(scheduleArray.map(h => ({
+          id: h.id,
+          name: h.nombre || h.name,
+          startTime: h.hora_entrada,
+          endTime: h.hora_salida,
+          toleranceMinutes: h.tolerancia_entrada_minutos,
+        })));
 
-    setForm((currentForm) => ({
-      ...currentForm,
-      scheduleId: String(newSchedule.id),
-    }));
+        setForm((currentForm) => ({
+          ...currentForm,
+          scheduleId: String(newId),
+        }));
+      }
+
+      closeScheduleModal();
+    } catch (err) {
+      setScheduleErrors({ submit: err.message || "Error al crear horario." });
+      return;
+    }
 
     setErrors((currentErrors) => ({
       ...currentErrors,
@@ -1289,11 +1311,17 @@ function EmployeeForm({
       const savedEmployeeFromApi =
         mapSavedEmployeeFromApi(createdEmployee, form);
 
+      // Incluir resultado de sincronización ZKTeco
+      savedEmployeeFromApi.sincronizacionResultado = createdEmployee.sincronizacion_resultado;
+      savedEmployeeFromApi.sincronizacionSolicitada = createdEmployee.sincronizacion_solicitada;
+      savedEmployeeFromApi.dispositivos = createdEmployee.dispositivos;
+
       setSavedEmployee(savedEmployeeFromApi);
 
+      // Dar más tiempo para que el usuario vea el resultado ZK
       setTimeout(() => {
         navigate("/employees");
-      }, 900);
+      }, 4000);
     } catch (error) {
       setErrors({
         submit:
@@ -1354,10 +1382,32 @@ function EmployeeForm({
             </strong>
 
             <p>
-              {isEditMode
-                ? `${savedEmployee.fullName} backend.`
-                : `${savedEmployee.fullName} backend.`}
+              {savedEmployee.fullName} — Registrado en base de datos.
             </p>
+
+            {savedEmployee.sincronizacionSolicitada && (
+              <div style={{ marginTop: "8px", fontSize: "0.85rem" }}>
+                {savedEmployee.sincronizacionResultado?.exitosos > 0 ? (
+                  <p style={{ color: "#166534" }}>
+                    Usuario ZKTeco creado en reloj. Huella pendiente de enrolar.
+                  </p>
+                ) : savedEmployee.sincronizacionResultado?.error ? (
+                  <p style={{ color: "#991b1b" }}>
+                    No fue posible registrar en el reloj: {savedEmployee.sincronizacionResultado.error}.
+                    Estado ZKTeco: Pendiente. Puedes reintentar desde el detalle del empleado.
+                  </p>
+                ) : savedEmployee.sincronizacionResultado?.errores > 0 ? (
+                  <p style={{ color: "#991b1b" }}>
+                    Error al sincronizar con el reloj. Estado ZKTeco: Pendiente/Error.
+                    Reintenta desde el detalle del empleado.
+                  </p>
+                ) : (
+                  <p style={{ color: "#6b7280" }}>
+                    Sincronización ZKTeco pendiente.
+                  </p>
+                )}
+              </div>
+            )}
           </div>
         </section>
       )}
@@ -1881,17 +1931,41 @@ function EmployeeForm({
                   ))}
                 </select>
 
+                <button
+                  className="primary-button compact-button"
+                  type="button"
+                  onClick={openScheduleModal}
+                  title="Crear horario rápido sin salir del formulario"
+                >
+                  <Plus size={16} />
+                  Crear nuevo horario
+                </button>
+
                 <Link
                   className="secondary-button compact-button link-button"
                   to="/schedules"
-                  title="Ir al módulo de horarios"
+                  target="_blank"
+                  title="Abrir módulo de horarios en otra pestaña"
                 >
-                  <Plus size={16} />
                   Administrar horarios
                 </Link>
               </div>
+
+              {/* Preview del horario seleccionado */}
+              {form.scheduleId && (() => {
+                const sel = activeSchedules.find(s => String(s.id) === String(form.scheduleId));
+                if (!sel) return null;
+                return (
+                  <div className="schedule-preview" style={{ marginTop: "8px", padding: "10px 14px", background: "#f9fafb", borderRadius: "8px", border: "1px solid #e5e7eb", fontSize: "0.82rem", color: "#374151" }}>
+                    <strong>{sel.nombre || sel.name}</strong>
+                    {sel.hora_entrada && <span style={{ marginLeft: "12px" }}>{String(sel.hora_entrada).slice(0,5)} – {String(sel.hora_salida).slice(0,5)}</span>}
+                    {sel.tolerancia_entrada_minutos != null && <span style={{ marginLeft: "12px" }}>Tolerancia: {sel.tolerancia_entrada_minutos} min</span>}
+                  </div>
+                );
+              })()}
+
               <span className="field-help">
-                Selecciona un horario existente. La creación y edición de horarios se hace desde el módulo Horarios.
+                Selecciona un horario existente o crea uno nuevo sin salir del formulario.
               </span>
               {errors.scheduleId && (
                 <span className="field-error">

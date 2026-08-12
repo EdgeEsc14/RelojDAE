@@ -1,6 +1,7 @@
 import {
   AlertTriangle,
   CalendarClock,
+  CalendarDays,
   ClipboardList,
   Clock,
   Database,
@@ -61,6 +62,12 @@ export const menuItems = [
     label: "Horarios",
     path: "/schedules",
     icon: CalendarClock,
+    module: MODULES.HORARIOS,
+  },
+  {
+    label: "Calendario",
+    path: "/calendar",
+    icon: CalendarDays,
     module: MODULES.HORARIOS,
   },
   {

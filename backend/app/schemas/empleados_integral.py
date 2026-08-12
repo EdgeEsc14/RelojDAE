@@ -90,6 +90,12 @@ class AltaIntegralEmpleadoRequest(BaseModel):
         default_factory=list,
     )
 
+    zk_user_id: str | None = Field(
+        default=None,
+        max_length=50,
+        description="ZK User ID explícito. Si no se envía, se auto-genera.",
+    )
+
     @field_validator(
         "nombres",
         "apellido_paterno",
@@ -262,3 +268,4 @@ class AltaIntegralEmpleadoResponse(BaseModel):
     dispositivos: list[
         AltaIntegralDispositivoResponse
     ]
+    sincronizacion_resultado: dict | None = None

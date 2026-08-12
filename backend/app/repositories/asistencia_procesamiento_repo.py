@@ -6,6 +6,8 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.services.calendario_service import resolver_fecha_laborable
+
 
 def _combinar_fecha_hora(fecha: date, hora: time) -> datetime:
     """Combina fecha con hora para generar un datetime."""
@@ -159,6 +161,112 @@ def _calcular_minutos_ordinarios(
     )
 
 
+def _registrar_dia_no_laboral(
+    db: Session,
+    *,
+    empleado_id: int,
+    horario_id: int,
+    fecha: date,
+    hora_entrada: time,
+    hora_salida: time,
+    primera_entrada: datetime | None,
+    ultima_salida: datetime | None,
+    eventos: list[dict[str, Any]],
+) -> None:
+    """
+    Registra un día no laborable en asistencias_diarias.
+
+    No genera puntos, no marca como falta, no penaliza.
+    Usa el estatus DIA_NO_LABORAL que ya existe en el CHECK constraint.
+    """
+
+    entrada_programada = _combinar_fecha_hora(fecha, hora_entrada)
+    salida_programada = _calcular_salida_programada(fecha, hora_entrada, hora_salida)
+
+    # Construir observación con nombres de eventos
+    nombres_eventos = [e.get("nombre", "Evento") for e in eventos if e.get("afecta_asistencia")]
+    observaciones = (
+        "Día no laborable según calendario: " + ", ".join(nombres_eventos)
+        if nombres_eventos
+        else "Día no laborable según calendario laboral."
+    )
+
+    db.execute(
+        text(
+            """
+            INSERT INTO asistencia.asistencias_diarias (
+                empleado_id,
+                periodo_evaluacion_id,
+                politica_asistencia_id,
+                horario_id,
+                fecha,
+                entrada_programada,
+                salida_programada,
+                primera_entrada,
+                ultima_salida,
+                minutos_retardo,
+                minutos_ordinarios,
+                minutos_extra,
+                estatus,
+                puntos_generados,
+                procesada,
+                requiere_revision,
+                observaciones,
+                fecha_procesamiento
+            )
+            VALUES (
+                :empleado_id,
+                NULL,
+                1,
+                :horario_id,
+                :fecha,
+                :entrada_programada,
+                :salida_programada,
+                :primera_entrada,
+                :ultima_salida,
+                0,
+                0,
+                0,
+                'DIA_NO_LABORAL',
+                0,
+                true,
+                false,
+                :observaciones,
+                CURRENT_TIMESTAMP
+            )
+            ON CONFLICT (empleado_id, fecha)
+            DO UPDATE SET
+                politica_asistencia_id = EXCLUDED.politica_asistencia_id,
+                horario_id = EXCLUDED.horario_id,
+                entrada_programada = EXCLUDED.entrada_programada,
+                salida_programada = EXCLUDED.salida_programada,
+                primera_entrada = EXCLUDED.primera_entrada,
+                ultima_salida = EXCLUDED.ultima_salida,
+                minutos_retardo = 0,
+                minutos_ordinarios = 0,
+                minutos_extra = 0,
+                estatus = 'DIA_NO_LABORAL',
+                puntos_generados = 0,
+                procesada = true,
+                requiere_revision = false,
+                observaciones = EXCLUDED.observaciones,
+                fecha_procesamiento = CURRENT_TIMESTAMP,
+                fecha_modificacion = CURRENT_TIMESTAMP
+            """
+        ),
+        {
+            "empleado_id": empleado_id,
+            "horario_id": horario_id,
+            "fecha": fecha,
+            "entrada_programada": entrada_programada,
+            "salida_programada": salida_programada,
+            "primera_entrada": primera_entrada,
+            "ultima_salida": ultima_salida,
+            "observaciones": observaciones,
+        },
+    )
+
+
 def procesar_asistencia_diaria(
     db: Session,
     fecha_inicio: date,
@@ -279,11 +387,46 @@ def procesar_asistencia_diaria(
     ).mappings().all()
 
     procesadas = 0
+    dias_no_laborables = 0
     errores: list[dict[str, Any]] = []
 
     for row in rows:
         try:
             fecha = row["fecha"]
+            empleado_id = row["empleado_id"]
+
+            # ============================================================
+            # PASO PREVIO: Verificar si la fecha es laborable
+            # según el Calendario Laboral.
+            #
+            # Si no hay eventos de calendario configurados, el
+            # comportamiento por defecto es considerar el día como
+            # laborable (opt-in).
+            # ============================================================
+            resolucion = resolver_fecha_laborable(
+                db, fecha, empleado_id
+            )
+
+            if not resolucion.es_laborable:
+                # Registrar como DIA_NO_LABORAL sin penalización
+                _registrar_dia_no_laboral(
+                    db=db,
+                    empleado_id=empleado_id,
+                    horario_id=row["horario_id"],
+                    fecha=fecha,
+                    hora_entrada=row["hora_entrada"],
+                    hora_salida=row["hora_salida"],
+                    primera_entrada=row["primera_entrada"],
+                    ultima_salida=row["ultima_salida"],
+                    eventos=resolucion.eventos,
+                )
+                dias_no_laborables += 1
+                procesadas += 1
+                continue
+
+            # ============================================================
+            # Procesamiento normal de asistencia (día laborable)
+            # ============================================================
 
             entrada_programada = _combinar_fecha_hora(
                 fecha,
@@ -428,5 +571,6 @@ def procesar_asistencia_diaria(
         "fecha_fin": fecha_fin.isoformat(),
         "registros_encontrados": len(rows),
         "procesadas": procesadas,
+        "dias_no_laborables": dias_no_laborables,
         "errores": errores,
     }
