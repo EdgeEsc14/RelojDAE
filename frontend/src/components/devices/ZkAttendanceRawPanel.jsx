@@ -56,7 +56,7 @@ export default function ZkAttendanceRawPanel() {
   const [searchTerm, setSearchTerm] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [source, setSource] = useState("live");
+  const [source, setSource] = useState("db");
   const [syncLoading, setSyncLoading] = useState(false);
   const [syncMessage, setSyncMessage] = useState("");
   async function loadAttendance(sourceOverride = source) {

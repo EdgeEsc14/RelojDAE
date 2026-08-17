@@ -3826,3 +3826,303 @@ a {
     flex-direction: row;
   }
 }
+
+/* ============================================================
+   SINCROINZACIÓN Y ANIMACIONES
+   ============================================================ */
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.spinning {
+  animation: spin 1s linear infinite;
+}
+
+.sync-status {
+  border-radius: 16px;
+  padding: 18px;
+  margin-bottom: 16px;
+}
+
+.sync-status.in-progress {
+  background: var(--color-warning-bg);
+  border: 1px solid var(--color-warning-text);
+}
+
+.sync-status.completed {
+  background: var(--color-success-bg);
+  border: 1px solid var(--color-success-text);
+}
+
+.sync-status.error {
+  background: var(--color-danger-bg);
+  border: 1px solid var(--color-danger-text);
+}
+
+.sync-status-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.sync-status-header h3 {
+  margin: 0;
+  font-size: 16px;
+  color: var(--color-text-strong);
+}
+
+.sync-status p {
+  margin: 0 0 12px 0;
+  color: var(--color-text);
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.sync-progress {
+  height: 6px;
+  background: rgba(0, 0, 0, 0.1);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.sync-progress-bar {
+  height: 100%;
+  background: var(--color-primary);
+  transition: width 0.3s ease;
+}
+
+.sync-status.in-progress .sync-progress-bar {
+  background: var(--color-warning-text);
+}
+
+.sync-status.completed .sync-progress-bar {
+  background: var(--color-success-text);
+}
+
+.sync-status.error .sync-progress-bar {
+  background: var(--color-danger-text);
+}
+
+/* ============================================================
+   DISPOSITIVOS - AJUSTES DE BOTÓN SINCROINZACIÓN
+   ============================================================ */
+
+.device-card-footer {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: 12px;
+  align-items: center;
+  padding-top: 16px;
+  border-top: 1px solid var(--color-border-soft);
+}
+
+.table-actions-group {
+  display: flex;
+  gap: 8px;
+}
+
+/* ============================================================
+   ESTILOS DASHBOARD MEJORADOS
+   ============================================================ */
+
+.chart-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 10px 0;
+}
+
+.chart-wide {
+  overflow-x: auto;
+}
+
+.ranking-list, 
+.department-incidence-list,
+.alert-list {
+  display: grid;
+  gap: 12px;
+}
+
+.ranking-row,
+.department-incidence-row,
+.alert-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border-radius: 12px;
+  background: var(--color-surface-soft);
+}
+
+.ranking-position {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.ranking-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.ranking-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.ranking-header div {
+  min-width: 0;
+}
+
+.ranking-header strong {
+  font-size: 14px;
+}
+
+.ranking-header span {
+  display: block;
+  margin-top: 2px;
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+.ranking-value {
+  font-size: 18px;
+}
+
+.ranking-value.danger {
+  color: var(--color-danger-text);
+}
+
+.ranking-value.warning {
+  color: var(--color-warning-text);
+}
+
+.ranking-track {
+  height: 8px;
+  background: rgba(0, 0, 0, 0.05);
+  border-radius: 4px;
+  overflow: hidden;
+  margin-bottom: 6px;
+}
+
+.ranking-bar {
+  height: 100%;
+  border-radius: 4px;
+}
+
+.ranking-bar.absence {
+  background: var(--color-danger-text);
+}
+
+.ranking-bar.delay {
+  background: var(--color-warning-text);
+}
+
+.ranking-bar.incidence {
+  background: var(--color-primary);
+}
+
+.ranking-meta {
+  display: flex;
+  gap: 12px;
+  color: var(--color-text-muted);
+  font-size: 11px;
+}
+
+.alert-item {
+  border-left: 4px solid transparent;
+}
+
+.alert-item.warning {
+  border-left-color: var(--color-warning-text);
+}
+
+.alert-item.danger {
+  border-left-color: var(--color-danger-text);
+}
+
+.alert-item.info {
+  border-left-color: var(--color-primary);
+}
+
+.alert-item > div {
+  flex: 1;
+}
+
+.alert-item strong {
+  display: block;
+  font-size: 16px;
+}
+
+.alert-item span {
+  display: block;
+  margin-top: 4px;
+  color: var(--color-text-muted);
+  font-size: 13px;
+}
+
+.department-incidence-content {
+  flex: 1;
+}
+
+.department-incidence-metrics {
+  display: flex;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.empty-state {
+  text-align: center;
+  padding: 40px 20px;
+  color: var(--color-text-muted);
+}
+
+.empty-state h3 {
+  margin: 16px 0 8px;
+  color: var(--color-text-strong);
+}
+
+/* ============================================================
+   RESPONSIVE PARA SINCROINZACIÓN
+   ============================================================ */
+
+@media (max-width: 760px) {
+  .device-card-footer {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+  
+  .device-card-grid {
+    grid-template-columns: 1fr;
+  }
+  
+  .sync-status {
+    padding: 14px;
+  }
+  
+  .ranking-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  
+  .ranking-value {
+    align-self: flex-end;
+  }
+  
+  .department-incidence-metrics {
+    flex-wrap: wrap;
+  }
+}

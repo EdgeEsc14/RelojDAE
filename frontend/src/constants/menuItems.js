@@ -9,7 +9,6 @@ import {
   Fingerprint,
   LayoutDashboard,
   Settings,
-  Shield,
   Users,
 } from "lucide-react";
 
@@ -23,7 +22,7 @@ export const menuItems = [
     module: MODULES.DASHBOARD,
   },
   {
-    label: "Empleados",
+    label: "Usuarios",
     path: "/employees",
     icon: Users,
     module: MODULES.EMPLEADOS,
@@ -35,7 +34,7 @@ export const menuItems = [
     module: MODULES.ASISTENCIA,
   },
   {
-    label: "Checadas crudas",
+    label: "Marcaciones",
     path: "/attendance/raw",
     icon: Database,
     module: MODULES.CHECADAS_CRUDAS,
@@ -69,12 +68,6 @@ export const menuItems = [
     path: "/calendar",
     icon: CalendarDays,
     module: MODULES.HORARIOS,
-  },
-  {
-    label: "Usuarios del sistema",
-    path: "/users",
-    icon: Shield,
-    module: MODULES.USUARIOS_SISTEMA,
   },
   {
     label: "Auditoría",

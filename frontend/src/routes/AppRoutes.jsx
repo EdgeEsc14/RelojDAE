@@ -39,8 +39,6 @@ import SchedulesPage from "../pages/schedules/SchedulesPage";
 
 import CalendarPage from "../pages/calendar/CalendarPage";
 
-import SystemUsersPage from "../pages/users/SystemUsersPage";
-
 import AuditPage from "../pages/audit/AuditPage";
 
 import SettingsPage from "../pages/settings/SettingsPage";
@@ -265,18 +263,6 @@ function AppRoutes() {
               requiredModule={MODULES.HORARIOS}
             >
               <CalendarPage />
-            </ProtectedRoute>
-          }
-        />
-
-        {/* Usuarios del sistema */}
-        <Route
-          path="/users"
-          element={
-            <ProtectedRoute
-              requiredModule={MODULES.USUARIOS_SISTEMA}
-            >
-              <SystemUsersPage />
             </ProtectedRoute>
           }
         />

@@ -47,7 +47,7 @@ def crear_alta_integral_empleado(
             correo_personal=payload.correo_personal,
         )
 
-        rol = _obtener_rol_empleado(db)
+        rol = _obtener_rol(db, payload.rol_id)
 
         dispositivos = _obtener_dispositivos(
             db=db,
@@ -221,7 +221,7 @@ def crear_alta_integral_empleado(
                     :correo_electronico,
                     :password_hash,
                     :nombre_usuario,
-                    'empleado',
+                    :rol_codigo,
                     'ACTIVO',
                     FALSE,
                     TRUE,
@@ -237,6 +237,7 @@ def crear_alta_integral_empleado(
             {
                 "empleado_id": empleado["id"],
                 "rol_id": rol["id"],
+                "rol_codigo": rol["codigo"],
                 "correo": payload.correo_personal,
                 "correo_electronico": (
                     payload.correo_personal
@@ -631,9 +632,39 @@ def _validar_datos_unicos(
         )
 
 
-def _obtener_rol_empleado(
+def _obtener_rol(
     db: Session,
+    rol_id: int | None = None,
 ) -> dict[str, Any]:
+    """
+    Obtiene un rol activo.
+
+    Si se proporciona rol_id, busca ese rol específico.
+    Si no, busca el rol 'empleado' por defecto.
+    """
+    if rol_id is not None:
+        row = db.execute(
+            text(
+                """
+                SELECT
+                    id,
+                    LOWER(codigo) AS codigo
+                FROM seguridad.roles
+                WHERE id = :rol_id
+                  AND activo = TRUE
+                LIMIT 1
+                """
+            ),
+            {"rol_id": rol_id},
+        ).mappings().first()
+
+        if row is None:
+            raise ValueError(
+                f"No existe un rol activo con id {rol_id}."
+            )
+
+        return dict(row)
+
     row = db.execute(
         text(
             """

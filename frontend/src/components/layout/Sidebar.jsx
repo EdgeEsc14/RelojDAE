@@ -50,7 +50,7 @@ function Sidebar() {
             <NavLink
               key={item.path}
               to={item.path}
-              end={item.path === "/dashboard"}
+              end
               className={({ isActive }) =>
                 isActive ? "sidebar-link active" : "sidebar-link"
               }

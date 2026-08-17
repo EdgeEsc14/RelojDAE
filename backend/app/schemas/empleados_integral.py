@@ -96,6 +96,12 @@ class AltaIntegralEmpleadoRequest(BaseModel):
         description="ZK User ID explícito. Si no se envía, se auto-genera.",
     )
 
+    rol_id: int | None = Field(
+        default=None,
+        ge=1,
+        description="ID del rol a asignar. Si no se envía, se asigna el rol 'empleado' por defecto.",
+    )
+
     @field_validator(
         "nombres",
         "apellido_paterno",

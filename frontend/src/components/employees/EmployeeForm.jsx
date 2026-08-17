@@ -20,6 +20,7 @@ import { empleadosApi } from "../../api/empleadosApi";
 
 import { catalogosApi } from "../../api/catalogosApi";
 import { horariosApi } from "../../api/horariosApi";
+import { getRoles } from "../../api/usuariosApi";
 import {
   getScheduleDescription,
 } from "../../data/mockCatalogs";
@@ -40,6 +41,7 @@ const INITIAL_SCHEDULE_FORM = {
   endTime: "17:00",
   toleranceMinutes: "10",
   breakMinutes: "0",
+  tipoTurnoId: "",
 };
 
 
@@ -217,6 +219,9 @@ function buildAltaIntegralPayload(form) {
 
     zk_user_id:
       form.zkUserId ? String(form.zkUserId).trim() : null,
+
+    rol_id:
+      form.roleId ? Number(form.roleId) : null,
   };
 }
 
@@ -622,6 +627,11 @@ function EmployeeForm({
           initialEmployee.scheduleId
             ? String(initialEmployee.scheduleId)
             : "",
+
+        roleId:
+          initialEmployee.roleId
+            ? String(initialEmployee.roleId)
+            : "",
       };
     }
 
@@ -641,6 +651,7 @@ function EmployeeForm({
       position: "",
       supervisorId: "",
       scheduleId: "",
+      roleId: "",
     };
   }, [
     isEditMode,
@@ -661,6 +672,8 @@ function EmployeeForm({
   const [schedules, setSchedules] = useState([]);
   const [departments, setDepartments] = useState([]);
   const [positions, setPositions] = useState([]);
+  const [rolesOptions, setRolesOptions] = useState([]);
+  const [tiposTurno, setTiposTurno] = useState([]);
   const [isLoadingCatalogs, setIsLoadingCatalogs] =
     useState(false);
   const [catalogsError, setCatalogsError] = useState("");
@@ -715,10 +728,14 @@ function EmployeeForm({
             departmentsResponse,
             positionsResponse,
             schedulesResponse,
+            rolesResponse,
+            tiposTurnoResponse,
           ] = await Promise.all([
             catalogosApi.listarUnidadesOrganizacionales(),
             catalogosApi.listarPuestos(),
             catalogosApi.listarHorarios(),
+            getRoles(),
+            catalogosApi.listarTiposTurno(),
           ]);
 
           if (!isMounted) return;
@@ -755,6 +772,16 @@ function EmployeeForm({
               (schedule) => schedule.activo,
             ),
           );
+
+          const rolesFromApi = Array.isArray(rolesResponse)
+            ? rolesResponse
+            : [];
+          setRolesOptions(rolesFromApi);
+
+          const tiposTurnoFromApi = Array.isArray(tiposTurnoResponse)
+            ? tiposTurnoResponse
+            : [];
+          setTiposTurno(tiposTurnoFromApi.filter((t) => t.activo));
         } catch (error) {
           if (!isMounted) return;
 
@@ -1145,8 +1172,34 @@ function EmployeeForm({
 
     // Crear horario en backend
     try {
-      const dias_map = { "Lunes": 1, "Martes": 2, "Miércoles": 3, "Jueves": 4, "Viernes": 5, "Sábado": 6, "Domingo": 7 };
-      const dias_aplicables = scheduleForm.days.map(d => dias_map[d] || 0).filter(Boolean);
+      // Determinar tipo de turno: usar el seleccionado o el primero disponible
+      let tipoTurnoId = scheduleForm.tipoTurnoId
+        ? Number(scheduleForm.tipoTurnoId)
+        : null;
+
+      if (!tipoTurnoId && tiposTurno.length > 0) {
+        // Inferir por hora de entrada: antes de 12:00 → matutino, después → vespertino
+        const hora = Number(scheduleForm.startTime.split(":")[0]);
+        const turnoMatutino = tiposTurno.find(
+          (t) => t.codigo?.toUpperCase().includes("MATUTINO")
+        );
+        const turnoVespertino = tiposTurno.find(
+          (t) => t.codigo?.toUpperCase().includes("VESPERTINO")
+        );
+
+        if (hora < 12 && turnoMatutino) {
+          tipoTurnoId = turnoMatutino.id;
+        } else if (hora >= 12 && turnoVespertino) {
+          tipoTurnoId = turnoVespertino.id;
+        } else {
+          tipoTurnoId = tiposTurno[0].id;
+        }
+      }
+
+      if (!tipoTurnoId) {
+        setScheduleErrors({ submit: "No hay tipos de turno disponibles. Crea uno desde el módulo de Horarios." });
+        return;
+      }
 
       const payload = {
         nombre: scheduleForm.name.trim(),
@@ -1155,7 +1208,7 @@ function EmployeeForm({
         hora_salida: scheduleForm.endTime,
         tolerancia_entrada_minutos: Number(scheduleForm.toleranceMinutes) || 10,
         descanso_minutos: Number(scheduleForm.breakMinutes) || 0,
-        dias_aplicables: dias_aplicables,
+        tipo_turno_id: tipoTurnoId,
         permite_tiempo_extra: true,
       };
 
@@ -1166,13 +1219,7 @@ function EmployeeForm({
         // Recargar catálogo de horarios
         const updatedSchedules = await catalogosApi.listarHorarios();
         const scheduleArray = Array.isArray(updatedSchedules) ? updatedSchedules : (updatedSchedules?.items || []);
-        setSchedules(scheduleArray.map(h => ({
-          id: h.id,
-          name: h.nombre || h.name,
-          startTime: h.hora_entrada,
-          endTime: h.hora_salida,
-          toleranceMinutes: h.tolerancia_entrada_minutos,
-        })));
+        setSchedules(scheduleArray.filter((h) => h.activo));
 
         setForm((currentForm) => ({
           ...currentForm,
@@ -1675,6 +1722,39 @@ function EmployeeForm({
                 </option>
               </select>
             </div>
+
+            <div className="form-field">
+              <label htmlFor="roleId">
+                Rol en el sistema
+              </label>
+
+              <select
+                id="roleId"
+                name="roleId"
+                value={form.roleId}
+                onChange={handleChange}
+                disabled={isLoadingCatalogs}
+              >
+                <option value="">
+                  {isLoadingCatalogs
+                    ? "Cargando roles..."
+                    : "Empleado (por defecto)"}
+                </option>
+
+                {rolesOptions.map((rol) => (
+                  <option
+                    key={rol.id}
+                    value={rol.id}
+                  >
+                    {rol.nombre}
+                  </option>
+                ))}
+              </select>
+
+              <span className="field-help">
+                Define el nivel de acceso al sistema web. Si no se selecciona, se asigna rol Empleado.
+              </span>
+            </div>
           </div>
         </div>
 
@@ -2110,6 +2190,33 @@ function EmployeeForm({
               </div>
 
               <div className="modal-form-grid">
+                <div className="form-field">
+                  <label htmlFor="scheduleTipoTurno">
+                    Tipo de turno
+                  </label>
+
+                  <select
+                    id="scheduleTipoTurno"
+                    name="tipoTurnoId"
+                    value={scheduleForm.tipoTurnoId}
+                    onChange={handleScheduleChange}
+                  >
+                    <option value="">
+                      Automático (según hora de entrada)
+                    </option>
+
+                    {tiposTurno.map((tipo) => (
+                      <option key={tipo.id} value={tipo.id}>
+                        {tipo.nombre}
+                      </option>
+                    ))}
+                  </select>
+
+                  <span className="field-help">
+                    Si no seleccionas, se asigna según la hora de entrada.
+                  </span>
+                </div>
+
                 <div className="form-field">
                   <label htmlFor="scheduleStartTime">
                     Hora de entrada

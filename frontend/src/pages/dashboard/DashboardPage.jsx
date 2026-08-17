@@ -9,6 +9,8 @@ import {
   TrendingUp,
   UserCheck,
   Users,
+  Download,
+  PlayCircle,
 } from "lucide-react";
 
 import {
@@ -27,6 +29,8 @@ import {
 } from "recharts";
 
 import { dashboardApi } from "../../api/dashboardApi";
+import { asistenciaApi } from "../../api/asistenciaApi";
+import { getZkHealth, syncZkAttendanceToDb, syncZkTime } from "../../api/zkApi";
 import PageHeader from "../../components/layout/PageHeader";
 
 function formatNumber(value) {
@@ -98,6 +102,8 @@ const INCIDENCIA_COLORS = {
 function DashboardPage() {
   const [dashboard, setDashboard] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [syncStatus, setSyncStatus] = useState(null);
   const [error, setError] = useState("");
 
   async function loadDashboard() {
@@ -111,6 +117,79 @@ function DashboardPage() {
     } finally {
       setLoading(false);
     }
+  }
+
+  async function handleSyncNow() {
+    setSyncing(true);
+    setSyncStatus({ step: 1, message: "Verificando conexión con reloj ZKTeco..." });
+
+    let relojDisponible = false;
+    let insertados = 0;
+    let procesados = 0;
+
+    // 1. Health check: verificar si el reloj responde antes de intentar cualquier cosa
+    try {
+      const health = await getZkHealth();
+      if (health?.ok) {
+        relojDisponible = true;
+        setSyncStatus({ step: 2, message: `Reloj conectado (${health.total_users} usuarios). Sincronizando marcaciones...` });
+      }
+    } catch {
+      relojDisponible = false;
+      setSyncStatus({ step: 2, message: "Reloj no disponible. Procesando con datos existentes en BD..." });
+    }
+
+    // 2. Si el reloj está disponible, sincronizar marcaciones
+    if (relojDisponible) {
+      try {
+        const syncResult = await syncZkAttendanceToDb({ limit: 5000 });
+        insertados = syncResult?.result?.insertados ?? syncResult?.result?.insertadas ?? 0;
+        setSyncStatus({ step: 3, message: `${insertados} marcaciones nuevas sincronizadas. Procesando asistencia...` });
+      } catch (syncErr) {
+        setSyncStatus({ step: 3, message: "Error al leer marcaciones. Procesando con datos existentes..." });
+      }
+    }
+
+    // 3. Procesar asistencia de hoy (funciona siempre, usa datos ya en BD)
+    try {
+      const hoy = new Date().toISOString().split("T")[0];
+      const processResult = await asistenciaApi.procesar({
+        fechaInicio: hoy,
+        fechaFin: hoy,
+      });
+      procesados = processResult?.procesados || processResult?.total_procesados || 0;
+      setSyncStatus({ step: 4, message: `Asistencia procesada (${procesados} registros). Actualizando dashboard...` });
+    } catch (procErr) {
+      setSyncStatus({ step: 4, message: "Error al procesar asistencia: " + (procErr.message || "desconocido") });
+    }
+
+    // 4. Recargar dashboard
+    try {
+      await loadDashboard();
+    } catch {
+      // loadDashboard maneja su propio error
+    }
+
+    // 5. Resultado final
+    if (relojDisponible && insertados >= 0) {
+      setSyncStatus({
+        step: 5,
+        message: `Sincronización completa: ${insertados} marcaciones nuevas, ${procesados} asistencias procesadas.`,
+        completed: true,
+      });
+    } else if (!relojDisponible) {
+      setSyncStatus({
+        step: 5,
+        message: `Reloj ZKTeco no disponible (sin red o apagado). Se procesó asistencia con datos ya existentes en la BD.${procesados > 0 ? ` (${procesados} procesados)` : ""} Conecta el reloj e intenta de nuevo.`,
+        warning: true,
+      });
+    }
+
+    setSyncing(false);
+
+    setTimeout(() => {
+      setSyncStatus(null);
+    }, 10000);
   }
 
   useEffect(() => {
@@ -216,16 +295,58 @@ function DashboardPage() {
         title="Dashboard"
         description="Resumen ejecutivo de asistencia, puntualidad e incidencias."
       >
-        <button
-          className="primary-button"
-          type="button"
-          disabled={loading}
-          onClick={loadDashboard}
-        >
-          <RefreshCw size={17} />
-          {loading ? "Actualizando..." : "Actualizar"}
-        </button>
+        <div className="header-actions">
+          <button
+            className="secondary-button"
+            type="button"
+            disabled={syncing}
+            onClick={handleSyncNow}
+            title="Sincronizar reloj y procesar asistencia"
+          >
+            {syncing ? <RefreshCw size={17} className="spinning" /> : <PlayCircle size={17} />}
+            {syncing ? "Sincronizando..." : "Sincronizar ahora"}
+          </button>
+          <button
+            className="primary-button"
+            type="button"
+            disabled={loading}
+            onClick={loadDashboard}
+          >
+            <RefreshCw size={17} />
+            {loading ? "Actualizando..." : "Actualizar"}
+          </button>
+        </div>
       </PageHeader>
+
+      {syncStatus && (
+        <section className="panel-card">
+          <div className={`sync-status ${syncStatus.error ? 'error' : syncStatus.completed ? 'completed' : 'in-progress'}`}>
+            <div className="sync-status-header">
+              {syncStatus.error ? (
+                <AlertTriangle size={20} />
+              ) : syncStatus.completed ? (
+                <CheckCircle2 size={20} />
+              ) : (
+                <RefreshCw size={20} className="spinning" />
+              )}
+              <h3>
+                {syncStatus.error ? 'Error de sincronización' : 
+                 syncStatus.completed ? 'Sincronización completada' : 
+                 'Sincronizando...'}
+              </h3>
+            </div>
+            <p>{syncStatus.message}</p>
+            {!syncStatus.completed && !syncStatus.error && (
+              <div className="sync-progress">
+                <div 
+                  className="sync-progress-bar" 
+                  style={{ width: `${(syncStatus.step / 5) * 100}%` }}
+                />
+              </div>
+            )}
+          </div>
+        </section>
+      )}
 
       {error && (
         <section className="panel-card">
