@@ -6,6 +6,7 @@ import {
   ChevronRight,
   Download,
   Eye,
+  Link2,
   Plus,
   Search,
   SlidersHorizontal,
@@ -558,6 +559,14 @@ function EmployeesPage() {
         description="Catálogo visual de empleados, usuarios ZKTeco, horarios y estatus de asistencia."
       >
         <div className="header-actions">
+          <Link
+            className="secondary-button link-button"
+            to="/employees/linking"
+          >
+            <Link2 size={17} />
+            Vinculación Reloj
+          </Link>
+
           <button
             className="secondary-button"
             type="button"

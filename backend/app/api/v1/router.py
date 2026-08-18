@@ -2,6 +2,7 @@ from fastapi import APIRouter
 
 from app.api.v1.endpoints import (
     asistencia,
+    branding,
     calendario,
     catalogos,
     dashboard,
@@ -31,3 +32,4 @@ router.include_router(reportes.router)
 router.include_router(incidencias.router)
 router.include_router(calendario.router)
 router.include_router(dispositivos.router)
+router.include_router(branding.router)

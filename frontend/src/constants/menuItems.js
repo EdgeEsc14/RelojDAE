@@ -4,7 +4,6 @@ import {
   CalendarDays,
   ClipboardList,
   Clock,
-  Database,
   FileText,
   Fingerprint,
   LayoutDashboard,
@@ -32,12 +31,6 @@ export const menuItems = [
     path: "/attendance",
     icon: Clock,
     module: MODULES.ASISTENCIA,
-  },
-  {
-    label: "Marcaciones",
-    path: "/attendance/raw",
-    icon: Database,
-    module: MODULES.CHECADAS_CRUDAS,
   },
   {
     label: "Incidencias",

@@ -126,41 +126,49 @@ function DashboardPage() {
     let relojDisponible = false;
     let insertados = 0;
     let procesados = 0;
+    let healthError = "";
 
-    // 1. Health check: verificar si el reloj responde antes de intentar cualquier cosa
+    // 1. Health check: verificar si el reloj responde
     try {
       const health = await getZkHealth();
       if (health?.ok) {
         relojDisponible = true;
         setSyncStatus({ step: 2, message: `Reloj conectado (${health.total_users} usuarios). Sincronizando marcaciones...` });
       }
-    } catch {
-      relojDisponible = false;
-      setSyncStatus({ step: 2, message: "Reloj no disponible. Procesando con datos existentes en BD..." });
+    } catch (err) {
+      healthError = err.message || "sin respuesta";
+      // No asumir que está desconectado — puede ser timeout corto. Intentar sync de todas formas.
+      setSyncStatus({ step: 2, message: "Health check falló. Intentando sincronización directa..." });
     }
 
-    // 2. Si el reloj está disponible, sincronizar marcaciones
-    if (relojDisponible) {
-      try {
-        const syncResult = await syncZkAttendanceToDb({ limit: 5000 });
-        insertados = syncResult?.result?.insertados ?? syncResult?.result?.insertadas ?? 0;
-        setSyncStatus({ step: 3, message: `${insertados} marcaciones nuevas sincronizadas. Procesando asistencia...` });
-      } catch (syncErr) {
-        setSyncStatus({ step: 3, message: "Error al leer marcaciones. Procesando con datos existentes..." });
+    // 2. Sincronizar marcaciones (intentar siempre, incluso si health falló)
+    try {
+      const syncResult = await syncZkAttendanceToDb({ limit: 5000 });
+      insertados = syncResult?.result?.insertados ?? syncResult?.result?.insertadas ?? 0;
+      relojDisponible = true; // Si llegó hasta aquí, el reloj SÍ respondió
+      setSyncStatus({ step: 3, message: `${insertados} marcaciones nuevas sincronizadas. Procesando asistencia...` });
+    } catch (syncErr) {
+      if (!relojDisponible) {
+        setSyncStatus({ step: 3, message: `No se pudo conectar al reloj (${healthError || syncErr.message}). Procesando con datos existentes...` });
+      } else {
+        setSyncStatus({ step: 3, message: "Error al sincronizar: " + (syncErr.message || "desconocido") });
       }
     }
 
-    // 3. Procesar asistencia de hoy (funciona siempre, usa datos ya en BD)
+    // 3. Procesar asistencia (últimos 7 días para cubrir marcaciones recientes)
     try {
-      const hoy = new Date().toISOString().split("T")[0];
+      const hoy = new Date();
+      const hace7dias = new Date(hoy.getTime() - 7 * 24 * 60 * 60 * 1000);
+      const fechaFin = hoy.toISOString().split("T")[0];
+      const fechaInicio = hace7dias.toISOString().split("T")[0];
       const processResult = await asistenciaApi.procesar({
-        fechaInicio: hoy,
-        fechaFin: hoy,
+        fechaInicio,
+        fechaFin,
       });
       procesados = processResult?.procesados || processResult?.total_procesados || 0;
-      setSyncStatus({ step: 4, message: `Asistencia procesada (${procesados} registros). Actualizando dashboard...` });
+      setSyncStatus({ step: 4, message: `Asistencia procesada (${procesados} registros, ${fechaInicio} a ${fechaFin}). Actualizando dashboard...` });
     } catch (procErr) {
-      setSyncStatus({ step: 4, message: "Error al procesar asistencia: " + (procErr.message || "desconocido") });
+      setSyncStatus({ step: 4, message: "Error al procesar: " + (procErr.message || "desconocido") });
     }
 
     // 4. Recargar dashboard
@@ -171,16 +179,16 @@ function DashboardPage() {
     }
 
     // 5. Resultado final
-    if (relojDisponible && insertados >= 0) {
+    if (relojDisponible) {
       setSyncStatus({
         step: 5,
         message: `Sincronización completa: ${insertados} marcaciones nuevas, ${procesados} asistencias procesadas.`,
         completed: true,
       });
-    } else if (!relojDisponible) {
+    } else {
       setSyncStatus({
         step: 5,
-        message: `Reloj ZKTeco no disponible (sin red o apagado). Se procesó asistencia con datos ya existentes en la BD.${procesados > 0 ? ` (${procesados} procesados)` : ""} Conecta el reloj e intenta de nuevo.`,
+        message: `Reloj ZKTeco no respondió: ${healthError || "timeout o sin conexión de red"}. Se procesó asistencia con datos existentes en BD.${procesados > 0 ? ` (${procesados} procesados)` : ""}`,
         warning: true,
       });
     }

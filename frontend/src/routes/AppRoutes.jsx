@@ -21,6 +21,7 @@ import DashboardPage from "../pages/dashboard/DashboardPage";
 import EmployeesPage from "../pages/employees/EmployeesPage";
 import EmployeeDetailPage from "../pages/employees/EmployeeDetailPage";
 import NewEmployeePage from "../pages/employees/NewEmployeePage";
+import EmployeeLinkingPage from "../pages/employees/EmployeeLinkingPage";
 
 import AttendancePage from "../pages/attendance/AttendancePage";
 import AttendanceRawPage from "../pages/attendance/AttendanceRawPage";
@@ -101,6 +102,20 @@ function AppRoutes() {
               ]}
             >
               <NewEmployeePage />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/employees/linking"
+          element={
+            <ProtectedRoute
+              requiredModule={MODULES.EMPLEADOS}
+              allowedAccessLevels={[
+                ACCESS_LEVELS.TOTAL,
+              ]}
+            >
+              <EmployeeLinkingPage />
             </ProtectedRoute>
           }
         />

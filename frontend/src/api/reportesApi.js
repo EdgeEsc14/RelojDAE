@@ -26,8 +26,8 @@ export function descargarReporteEmpleadoCSV(codigoEmpleado, fechaInicio, fechaFi
 }
 
 export function descargarReporteEmpleadoPDF(codigoEmpleado, fechaInicio, fechaFin) {
-  const url = `/reportes/empleado/${codigoEmpleado}?fecha_inicio=${fechaInicio}&fecha_fin=${fechaFin}&formato=pdf`;
-  return descargarArchivo(url, `reporte_empleado_${codigoEmpleado}_${fechaInicio}_${fechaFin}.pdf`);
+  const url = `/reportes/empleado/${codigoEmpleado}/pdf?fecha_inicio=${fechaInicio}&fecha_fin=${fechaFin}`;
+  return descargarArchivo(url, `reporte_${codigoEmpleado}_${fechaInicio}_${fechaFin}.pdf`);
 }
 
 export function descargarReporteDepartamentalCSV(fechaInicio, fechaFin, unidadId) {

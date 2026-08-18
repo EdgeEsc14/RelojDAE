@@ -459,6 +459,7 @@ def listar_asistencia_diaria(
             e.nombre_completo,
             e.correo,
             e.estatus AS empleado_estatus,
+            e.zk_user_id,
 
             uo.id AS unidad_organizacional_id,
             uo.codigo AS unidad_codigo,

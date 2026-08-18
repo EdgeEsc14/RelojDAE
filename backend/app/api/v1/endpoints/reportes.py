@@ -20,11 +20,17 @@ from app.repositories.reportes_repo import (
     obtener_reporte_departamental,
     obtener_reporte_empleado,
 )
+from app.repositories.reportes_pdf_repo import (
+    obtener_datos_reporte_empleado as obtener_datos_pdf,
+)
 from app.services.reportes_export_service import (
     generar_csv_reporte_departamental,
     generar_csv_reporte_empleado,
     generar_pdf_reporte_departamental,
     generar_pdf_reporte_empleado,
+)
+from app.services.reporte_pdf_service import (
+    generar_reporte_pdf_empleado as generar_pdf_profesional,
 )
 
 
@@ -205,3 +211,72 @@ def get_reporte_departamental(
 
     # Default: JSON
     return data
+
+
+# ============================================================
+# Reporte PDF Profesional por Empleado (nuevo, con reportlab)
+# ============================================================
+
+
+@router.get("/empleado/{codigo_empleado}/pdf")
+def get_reporte_empleado_pdf(
+    codigo_empleado: str,
+    db: Annotated[Session, Depends(get_db)],
+    access_scope: Annotated[
+        AccessScope,
+        Depends(
+            require_module_access("REPORTES", "exportar")
+        ),
+    ],
+    fecha_inicio: date = Query(description="Fecha inicial YYYY-MM-DD"),
+    fecha_fin: date = Query(description="Fecha final YYYY-MM-DD"),
+):
+    """
+    Genera reporte PDF profesional de asistencia/incidencias
+    para un empleado específico.
+
+    Diseño institucional con:
+    - Logo configurable
+    - Encabezado institucional
+    - Datos del empleado
+    - Tabla diaria detallada
+    - Resumen estadístico
+    - Pie de página con paginación
+    """
+
+    if fecha_fin < fecha_inicio:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="fecha_fin no puede ser anterior a fecha_inicio.",
+        )
+
+    datos = obtener_datos_pdf(
+        db=db,
+        codigo_empleado=codigo_empleado,
+        fecha_inicio=fecha_inicio,
+        fecha_fin=fecha_fin,
+    )
+
+    if datos is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Empleado no encontrado.",
+        )
+
+    try:
+        pdf_bytes = generar_pdf_profesional(datos)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error generando PDF: {type(exc).__name__}: {str(exc)}",
+        ) from exc
+
+    filename = f"reporte_{codigo_empleado}_{fecha_inicio}_{fecha_fin}.pdf"
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+        },
+    )
