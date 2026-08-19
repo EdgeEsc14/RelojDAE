@@ -99,6 +99,7 @@ def listar_empleados(
             e.nombre_completo,
             e.correo,
             e.estatus,
+            e.zk_user_id AS empleado_zk_user_id,
 
             uo.id AS unidad_organizacional_id,
             uo.codigo AS unidad_organizacional_codigo,

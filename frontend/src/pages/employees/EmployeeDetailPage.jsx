@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   ArrowLeft,
   CalendarClock,
@@ -12,6 +12,7 @@ import {
   Pencil,
   RefreshCcw,
   ShieldCheck,
+  Trash2,
   UserRound,
   Wifi,
   X,
@@ -53,6 +54,7 @@ function getStatusClass(s) {
 
 function EmployeeDetailPage() {
   const { employeeId } = useParams();
+  const navigate = useNavigate();
 
   const [profile, setProfile] = useState(null);
   const [attendance, setAttendance] = useState(null);
@@ -73,6 +75,22 @@ function EmployeeDetailPage() {
   const [horarioError, setHorarioError] = useState("");
 
   useEffect(() => { loadData(); }, [employeeId]);
+
+  async function handleDeleteEmployee() {
+    const emp = profile?.empleado;
+    if (!emp) return;
+
+    const confirmMsg = `¿Estás seguro de dar de baja al empleado ${emp.nombre_completo} (${emp.codigo_empleado})?\n\nEl empleado pasará a estatus INACTIVO y no aparecerá en el procesamiento de asistencia.`;
+    if (!confirm(confirmMsg)) return;
+
+    try {
+      await empleadosApi.actualizarEstatus(emp.codigo_empleado, { estatus: "INACTIVO" });
+      alert("Empleado dado de baja correctamente.");
+      navigate("/employees");
+    } catch (err) {
+      alert("Error al dar de baja: " + (err.message || "Error desconocido"));
+    }
+  }
 
   async function loadData() {
     setLoading(true);
@@ -178,6 +196,15 @@ function EmployeeDetailPage() {
         <div className="header-actions">
           <Link className="secondary-button link-button" to="/employees"><ArrowLeft size={17} /> Volver</Link>
           <Link className="secondary-button link-button" to={`/employees/${employeeId}/edit`}><Pencil size={17} /> Editar</Link>
+          <button
+            className="secondary-button"
+            type="button"
+            onClick={handleDeleteEmployee}
+            style={{ color: "var(--color-danger-text)" }}
+            title="Dar de baja al empleado"
+          >
+            <Trash2 size={17} /> Dar de baja
+          </button>
         </div>
       </PageHeader>
 

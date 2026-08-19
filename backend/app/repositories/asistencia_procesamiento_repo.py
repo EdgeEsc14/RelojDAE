@@ -54,8 +54,18 @@ def _calcular_estatus_y_puntos(
     minutos_retardo: int,
     tiene_entrada: bool,
     tiene_salida: bool,
+    fecha=None,
+    salida_programada=None,
 ) -> tuple[str, int, bool, str]:
     if not tiene_entrada:
+        # Si es hoy y aún no llega la hora de salida,
+        # no procesar todavía
+        if fecha is not None and salida_programada is not None:
+            ahora = datetime.now()
+            fecha_date = fecha if isinstance(fecha, date) else ahora.date()
+            if fecha_date == ahora.date() and ahora < salida_programada:
+                return None  # No procesar: turno aún no termina
+
         return (
             "FALTA",
             0,
@@ -72,6 +82,35 @@ def _calcular_estatus_y_puntos(
         )
 
     if not tiene_salida:
+        # Si es hoy y aún no termina el turno (+ 2 horas de margen),
+        # procesar con el estatus de entrada (puntual/retardo) pero sin salida
+        if fecha is not None and salida_programada is not None:
+            ahora = datetime.now()
+            fecha_date = fecha if isinstance(fecha, date) else ahora.date()
+            margen_post_salida = salida_programada + timedelta(hours=2)
+            if fecha_date == ahora.date() and ahora < margen_post_salida:
+                # Evaluar solo la entrada — el turno sigue
+                if minutos_retardo <= 10:
+                    return (
+                        "COMPLETO",
+                        0,
+                        False,
+                        "Entrada puntual. Turno en curso.",
+                    )
+                if minutos_retardo <= 20:
+                    return (
+                        "RETARDO_MENOR",
+                        1,
+                        False,
+                        f"Entrada con {minutos_retardo} min de retardo. Turno en curso.",
+                    )
+                return (
+                    "RETARDO_MAYOR",
+                    2,
+                    False,
+                    f"Entrada con {minutos_retardo} min de retardo. Turno en curso.",
+                )
+
         return (
             "OMISION_SALIDA",
             0,
@@ -279,6 +318,33 @@ def procesar_asistencia_diaria(
     se busca en el día siguiente. La fecha del registro de asistencia corresponde
     al día de ENTRADA del turno.
     """
+
+    # Paso previo: vincular marcaciones huérfanas con sus empleados
+    # (marcaciones con zk_user_id pero sin empleado_id)
+    db.execute(
+        text(
+            """
+            UPDATE asistencia.marcaciones_crudas mc
+            SET
+                empleado_id = e.id,
+                codigo_empleado = e.codigo_empleado
+            FROM personal.empleados e
+            WHERE mc.empleado_id IS NULL
+              AND mc.zk_user_id IS NOT NULL
+              AND mc.zk_user_id != ''
+              AND e.zk_user_id = mc.zk_user_id
+              AND mc.fecha BETWEEN :fecha_inicio AND :fecha_fin
+            """
+        ),
+        {"fecha_inicio": fecha_inicio, "fecha_fin": fecha_fin},
+    )
+
+    # Paso previo 2: si estamos procesando hoy, limpiar registros de
+    # turnos que ya fueron reprocesados para que se actualicen correctamente
+    hoy = date.today()
+
+    db.flush()
+
     rows = db.execute(
         text(
             """
@@ -447,13 +513,19 @@ def procesar_asistencia_diaria(
                 primera_entrada=primera_entrada,
             )
 
-            estatus, puntos, requiere_revision, observaciones = (
-                _calcular_estatus_y_puntos(
-                    minutos_retardo=minutos_retardo,
-                    tiene_entrada=primera_entrada is not None,
-                    tiene_salida=ultima_salida is not None,
-                )
+            resultado_estatus = _calcular_estatus_y_puntos(
+                minutos_retardo=minutos_retardo,
+                tiene_entrada=primera_entrada is not None,
+                tiene_salida=ultima_salida is not None,
+                fecha=fecha,
+                salida_programada=salida_programada,
             )
+
+            # Si retorna None, el turno aún no termina — saltar sin grabar
+            if resultado_estatus is None:
+                continue
+
+            estatus, puntos, requiere_revision, observaciones = resultado_estatus
 
             minutos_extra = _calcular_minutos_extra(
                 modalidad_tiempo_extra=row["modalidad_tiempo_extra"],
@@ -566,11 +638,164 @@ def procesar_asistencia_diaria(
 
     db.commit()
 
+    # ============================================================
+    # PASO FINAL: Generar FALTA para empleados activos con horario
+    # que NO tienen registro de asistencia en el rango.
+    #
+    # Solo para días que ya pasaron (no para hoy si el turno
+    # no ha terminado). Para hoy, solo generar falta si ya pasó
+    # la hora de salida programada + 2 horas.
+    # ============================================================
+    faltas_generadas = 0
+    ahora = datetime.now()
+
+    try:
+        empleados_sin_asistencia = db.execute(
+            text(
+                """
+                WITH dias_rango AS (
+                    SELECT generate_series(
+                        :fecha_inicio::date,
+                        :fecha_fin::date,
+                        INTERVAL '1 day'
+                    )::date AS fecha
+                ),
+
+                empleados_con_horario AS (
+                    SELECT
+                        e.id AS empleado_id,
+                        ah.horario_id,
+                        h.hora_entrada,
+                        h.hora_salida,
+                        ah.fecha_inicio AS horario_desde,
+                        ah.fecha_fin AS horario_hasta
+                    FROM personal.empleados e
+                    INNER JOIN asistencia.asignaciones_horario ah
+                        ON ah.empleado_id = e.id
+                       AND ah.estatus = 'ACTIVA'
+                    INNER JOIN asistencia.horarios h
+                        ON h.id = ah.horario_id
+                       AND h.activo = TRUE
+                    WHERE UPPER(COALESCE(e.estatus, '')) = 'ACTIVO'
+                )
+
+                SELECT
+                    ech.empleado_id,
+                    ech.horario_id,
+                    ech.hora_entrada,
+                    ech.hora_salida,
+                    dr.fecha
+                FROM dias_rango dr
+                CROSS JOIN empleados_con_horario ech
+                WHERE dr.fecha >= ech.horario_desde
+                  AND (ech.horario_hasta IS NULL OR dr.fecha <= ech.horario_hasta)
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM asistencia.asistencias_diarias ad
+                      WHERE ad.empleado_id = ech.empleado_id
+                        AND ad.fecha = dr.fecha
+                  )
+                ORDER BY dr.fecha, ech.empleado_id
+                """
+            ),
+            {
+                "fecha_inicio": fecha_inicio,
+                "fecha_fin": fecha_fin,
+            },
+        ).mappings().all()
+
+        for emp_row in empleados_sin_asistencia:
+            emp_fecha = emp_row["fecha"]
+            hora_salida = emp_row["hora_salida"]
+            hora_entrada = emp_row["hora_entrada"]
+
+            # Para hoy: no generar falta si el turno aún no termina + 2h
+            if emp_fecha == ahora.date():
+                salida_dt = datetime.combine(emp_fecha, hora_salida)
+                if hora_salida < hora_entrada:
+                    # Turno nocturno: salida al día siguiente
+                    continue  # No procesar turnos nocturnos de hoy
+                if ahora < salida_dt + timedelta(hours=2):
+                    continue  # Turno aún no termina
+
+            entrada_programada = datetime.combine(emp_fecha, hora_entrada)
+            salida_programada = datetime.combine(emp_fecha, hora_salida)
+            if hora_salida < hora_entrada:
+                salida_programada = datetime.combine(
+                    emp_fecha + timedelta(days=1), hora_salida
+                )
+
+            try:
+                db.execute(
+                    text(
+                        """
+                        INSERT INTO asistencia.asistencias_diarias (
+                            empleado_id,
+                            periodo_evaluacion_id,
+                            politica_asistencia_id,
+                            horario_id,
+                            fecha,
+                            entrada_programada,
+                            salida_programada,
+                            primera_entrada,
+                            ultima_salida,
+                            minutos_retardo,
+                            minutos_ordinarios,
+                            minutos_extra,
+                            estatus,
+                            puntos_generados,
+                            procesada,
+                            requiere_revision,
+                            observaciones,
+                            fecha_procesamiento
+                        )
+                        VALUES (
+                            :empleado_id,
+                            NULL,
+                            1,
+                            :horario_id,
+                            :fecha,
+                            :entrada_programada,
+                            :salida_programada,
+                            NULL,
+                            NULL,
+                            0,
+                            0,
+                            0,
+                            'FALTA',
+                            0,
+                            TRUE,
+                            TRUE,
+                            'Sin marcaciones registradas para este día.',
+                            CURRENT_TIMESTAMP
+                        )
+                        ON CONFLICT (empleado_id, fecha) DO NOTHING
+                        """
+                    ),
+                    {
+                        "empleado_id": emp_row["empleado_id"],
+                        "horario_id": emp_row["horario_id"],
+                        "fecha": emp_fecha,
+                        "entrada_programada": entrada_programada,
+                        "salida_programada": salida_programada,
+                    },
+                )
+                faltas_generadas += 1
+            except Exception:
+                continue
+
+        db.commit()
+
+    except Exception:
+        # Si falla la generación de faltas, no romper el procesamiento principal
+        db.rollback()
+
     return {
         "fecha_inicio": fecha_inicio.isoformat(),
         "fecha_fin": fecha_fin.isoformat(),
         "registros_encontrados": len(rows),
         "procesadas": procesadas,
+        "faltas_generadas": faltas_generadas,
         "dias_no_laborables": dias_no_laborables,
         "errores": errores,
     }

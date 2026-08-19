@@ -201,6 +201,7 @@ function mapEmployeeFromApi(employee) {
 
     zkUserId:
       employee.zk_user_id ||
+      employee.empleado_zk_user_id ||
       employee.zk_uid ||
       employee.zkUserId ||
       null,

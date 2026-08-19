@@ -73,6 +73,8 @@ function formatAttendanceStatus(status) {
   if (s === "FALTA") return "Falta";
   if (s === "OMISION_ENTRADA") return "Omisión entrada";
   if (s === "OMISION_SALIDA") return "Omisión salida";
+  if (s === "EN_CURSO") return "En curso";
+  if (s === "DIA_NO_LABORAL") return "No laboral";
   return status || "Sin procesar";
 }
 
@@ -80,6 +82,8 @@ function getStatusClass(status) {
   if (status?.includes("Completo")) return "badge success";
   if (status?.includes("Retardo")) return "badge warning";
   if (status === "Falta" || status?.includes("Omisión")) return "badge danger";
+  if (status === "En curso") return "badge neutral";
+  if (status === "No laboral") return "badge neutral";
   return "badge neutral";
 }
 

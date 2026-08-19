@@ -212,7 +212,9 @@ function DashboardPage() {
     const alertas = dashboard.alertas ?? {};
     const totalHoy = Number(asistenciaHoy.total ?? 0);
     const completosHoy = Number(asistenciaHoy.completos ?? 0);
-    const pctAsistencia = totalHoy > 0 ? Math.round((completosHoy / totalHoy) * 100) : 0;
+    const retardosHoy = Number(asistenciaHoy.retardos_menores ?? 0) + Number(asistenciaHoy.retardos_mayores ?? 0);
+    const faltasHoy = Number(asistenciaHoy.faltas ?? 0);
+    const pctPuntualidad = totalHoy > 0 ? Math.round((completosHoy / totalHoy) * 100) : 0;
 
     return [
       {
@@ -224,22 +226,22 @@ function DashboardPage() {
       },
       {
         title: "Puntualidad hoy",
-        value: `${pctAsistencia}%`,
-        description: `${formatNumber(completosHoy)} de ${formatNumber(totalHoy)} completas`,
+        value: `${pctPuntualidad}%`,
+        description: `${formatNumber(completosHoy)} puntuales de ${formatNumber(totalHoy)} procesados`,
         icon: CheckCircle2,
         color: "#10b981",
       },
       {
         title: "Faltas hoy",
-        value: formatNumber(asistenciaHoy.faltas),
-        description: `${formatNumber(asistenciaHoy.requieren_revision)} requieren revisión`,
+        value: formatNumber(faltasHoy),
+        description: `${formatNumber(retardosHoy)} retardos`,
         icon: AlertTriangle,
         color: "#ef4444",
       },
       {
-        title: "Incidencias pendientes",
-        value: formatNumber(alertas.asistencias_revision_hoy),
-        description: `${formatNumber(alertas.empleados_sin_horario)} sin horario`,
+        title: "Pendientes revisión",
+        value: formatNumber(asistenciaHoy.requieren_revision),
+        description: `${formatNumber(alertas.empleados_sin_horario)} sin horario asignado`,
         icon: Clock,
         color: "#f59e0b",
       },
@@ -251,7 +253,7 @@ function DashboardPage() {
     if (!dashboard) return [];
     return (dashboard.asistencia_ultimos_dias ?? []).map((row) => ({
       fecha: formatShortDate(row.fecha),
-      Completas: Number(row.completos ?? 0),
+      Puntuales: Number(row.completos ?? 0),
       Retardos: Number(row.retardos ?? 0),
       Faltas: Number(row.faltas ?? 0),
     }));
@@ -262,11 +264,10 @@ function DashboardPage() {
     if (!dashboard) return [];
     const hoy = dashboard.asistencia_hoy ?? {};
     const data = [];
-    if (Number(hoy.completos) > 0) data.push({ name: "Completas", value: Number(hoy.completos) });
+    if (Number(hoy.completos) > 0) data.push({ name: "Puntuales", value: Number(hoy.completos) });
     const retardos = Number(hoy.retardos_menores ?? 0) + Number(hoy.retardos_mayores ?? 0);
     if (retardos > 0) data.push({ name: "Retardos", value: retardos });
     if (Number(hoy.faltas) > 0) data.push({ name: "Faltas", value: Number(hoy.faltas) });
-    if (Number(hoy.requieren_revision) > 0) data.push({ name: "Revisión", value: Number(hoy.requieren_revision) });
     return data;
   }, [dashboard]);
 
@@ -420,7 +421,7 @@ function DashboardPage() {
                       labelStyle={{ fontWeight: 600 }}
                     />
                     <Legend wrapperStyle={{ fontSize: 12 }} />
-                    <Bar dataKey="Completas" stackId="a" fill={COLORS.completos} radius={[0, 0, 0, 0]} />
+                    <Bar dataKey="Puntuales" stackId="a" fill={COLORS.completos} radius={[0, 0, 0, 0]} />
                     <Bar dataKey="Retardos" stackId="a" fill={COLORS.retardos} />
                     <Bar dataKey="Faltas" stackId="a" fill={COLORS.faltas} radius={[4, 4, 0, 0]} />
                   </BarChart>
@@ -465,7 +466,7 @@ function DashboardPage() {
                 </div>
               ) : (
                 <div className="empty-state">
-                  <p>No hay asistencia procesada hoy.</p>
+                  <p>No hay asistencia procesada hoy. Sincroniza marcaciones y procesa la asistencia.</p>
                 </div>
               )}
             </article>

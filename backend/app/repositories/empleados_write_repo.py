@@ -277,9 +277,9 @@ def actualizar_estatus_empleado(
         """
         UPDATE personal.empleados
         SET
-            estatus = :estatus,
+            estatus = CAST(:estatus AS VARCHAR),
             fecha_baja = CASE
-                WHEN :estatus = 'BAJA' THEN COALESCE(fecha_baja, CURRENT_DATE)
+                WHEN CAST(:estatus AS VARCHAR) = 'BAJA' THEN COALESCE(fecha_baja, CURRENT_DATE)
                 ELSE fecha_baja
             END,
             fecha_modificacion = CURRENT_TIMESTAMP
