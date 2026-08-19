@@ -40,10 +40,10 @@ def _user_from_row(row: Any) -> dict[str, Any] | None:
     if row is None:
         return None
 
-    rol = _clean_text(row["rol"])
-
-    if not rol:
-        rol = _normalize_role(row["rol_codigo"])
+    rol = _normalize_role(
+        row["rol_codigo"]
+        or row["rol"]
+    )
 
     return {
         "id": row["id"],
@@ -53,7 +53,7 @@ def _user_from_row(row: Any) -> dict[str, Any] | None:
         "nombre_usuario": row["nombre_usuario"],
         "password_hash": row["password_hash"],
         "rol_id": row["rol_id"],
-        "rol": _normalize_role(rol),
+        "rol": rol,
         "rol_codigo": row["rol_codigo"],
         "rol_nombre": row["rol_nombre"],
         "estatus": row["estatus"],

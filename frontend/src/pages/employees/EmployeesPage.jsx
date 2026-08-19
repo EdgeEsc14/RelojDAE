@@ -6,6 +6,7 @@ import {
   ChevronRight,
   Download,
   Eye,
+  Link2,
   Plus,
   Search,
   SlidersHorizontal,
@@ -16,7 +17,7 @@ import {
 import PageHeader from "../../components/layout/PageHeader";
 
 import {
-  ACCESS_LEVELS,
+  DATA_SCOPES,
   MODULES,
 } from "../../constants/permissions";
 
@@ -24,7 +25,7 @@ import { useAuth } from "../../context/AuthContext";
 /* Esta cosa solamente era de prueba 
 import { mockEmployees } from "../../data/mockEmployees";*/
 import { empleadosApi } from "../../api/empleadosApi";
-import { getModuleAccess } from "../../utils/permissions";
+import { getModuleAccess, canCreate } from "../../utils/permissions";
 
 function getStatusClass(status) {
   if (status === "Activo") return "badge success";
@@ -200,6 +201,7 @@ function mapEmployeeFromApi(employee) {
 
     zkUserId:
       employee.zk_user_id ||
+      employee.empleado_zk_user_id ||
       employee.zk_uid ||
       employee.zkUserId ||
       null,
@@ -307,7 +309,7 @@ function EmployeesPage() {
         setIsLoadingEmployees(true);
         setEmployeesError("");
 
-        const data = await empleadosApi.listar();
+        const data = await empleadosApi.listar({ limit: 100 });
         /*Esta cosa es temporal solo para saber como esta
         console.log("Respuesta empleados API:", data);*/
         
@@ -349,20 +351,19 @@ function EmployeesPage() {
   const scopedEmployees = useMemo(() => {
     return employees.filter((employee) => {
       if (
-        employeeAccess === ACCESS_LEVELS.TOTAL ||
-        employeeAccess === ACCESS_LEVELS.LECTURA
+        employeeAccess === DATA_SCOPES.TOTAL
       ) {
         return true;
       }
 
-      if (employeeAccess === ACCESS_LEVELS.AREA) {
+      if (employeeAccess === DATA_SCOPES.AREA) {
         return (
           Number(employee.departmentId) ===
           Number(currentDepartmentId)
         );
       }
 
-      if (employeeAccess === ACCESS_LEVELS.PROPIO) {
+      if (employeeAccess === DATA_SCOPES.PROPIO) {
         return (
           Number(employee.id) ===
           Number(currentEmployeeId)
@@ -536,7 +537,7 @@ function EmployeesPage() {
   );
 
   const canCreateEmployee =
-    employeeAccess === ACCESS_LEVELS.TOTAL;
+    canCreate(user?.role, MODULES.EMPLEADOS);
 
   const activeFilterCount = [
     selectedDepartment !== "todos",
@@ -559,9 +560,21 @@ function EmployeesPage() {
         description="Catálogo visual de empleados, usuarios ZKTeco, horarios y estatus de asistencia."
       >
         <div className="header-actions">
+          <Link
+            className="secondary-button link-button"
+            to="/employees/linking"
+          >
+            <Link2 size={17} />
+            Vinculación Reloj
+          </Link>
+
           <button
             className="secondary-button"
             type="button"
+            onClick={async () => {
+              try { await empleadosApi.exportarCSV(); }
+              catch (err) { alert("Error al exportar: " + err.message); }
+            }}
           >
             <Download size={17} />
             Exportar
@@ -860,10 +873,7 @@ function EmployeesPage() {
                       {employee.zkUserId ? (
                         <div className="table-stacked-cell">
                           <strong>{employee.zkUserId}</strong>
-
-                          {employee.device && (
-                            <span>{employee.device}</span>
-                          )}
+                          <span>{employee.device || "Reloj principal"}</span>
                         </div>
                       ) : (
                         <span className="muted-table-text">

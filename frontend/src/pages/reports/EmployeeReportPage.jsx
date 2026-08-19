@@ -1,31 +1,138 @@
-import { Link } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { Link, useParams } from "react-router-dom";
 import {
   ArrowLeft,
   Download,
+  FileSpreadsheet,
   FileText,
-  Printer,
+  Loader,
   ShieldCheck,
 } from "lucide-react";
 
 import PageHeader from "../../components/layout/PageHeader";
-import { mockEmployeeReport } from "../../data/mockReports";
+import {
+  getReporteEmpleadoJSON,
+  descargarReporteEmpleadoCSV,
+  descargarReporteEmpleadoPDF,
+} from "../../api/reportesApi";
 
-function getStatusClass(status) {
-  if (status.includes("Completo")) return "badge success";
-  if (status.includes("Pendiente")) return "badge warning";
-  if (status.includes("Sin registro")) return "badge neutral";
-  if (status.includes("Falta")) return "badge danger";
+function getStatusClass(estatus) {
+  if (estatus === "COMPLETO") return "badge success";
+  if (estatus === "RETARDO_MENOR") return "badge warning";
+  if (estatus === "RETARDO_MAYOR") return "badge warning";
+  if (estatus === "FALTA") return "badge danger";
+  if (estatus === "OMISION_SALIDA") return "badge neutral";
   return "badge neutral";
 }
 
+function getStatusLabel(estatus) {
+  const labels = {
+    COMPLETO: "Completo",
+    RETARDO_MENOR: "Retardo menor",
+    RETARDO_MAYOR: "Retardo mayor",
+    FALTA: "Falta",
+    OMISION_SALIDA: "Om. salida",
+  };
+  return labels[estatus] || estatus || "";
+}
+
+function formatTime(dt) {
+  if (!dt) return "—";
+  try {
+    const d = new Date(dt);
+    return d.toLocaleTimeString("es-MX", { hour: "2-digit", minute: "2-digit" });
+  } catch {
+    return dt;
+  }
+}
+
+function formatDate(value) {
+  if (!value) return "";
+  try {
+    const d = new Date(value + "T00:00:00");
+    return d.toLocaleDateString("es-MX", { day: "2-digit", month: "short", year: "numeric" });
+  } catch {
+    return value;
+  }
+}
+
+function minutosAHoras(min) {
+  if (!min) return "00:00";
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+
+function getDefaultDates() {
+  const today = new Date();
+  const firstDay = new Date(today.getFullYear(), today.getMonth(), 1);
+  const fin = today.toISOString().split("T")[0];
+  const inicio = firstDay.toISOString().split("T")[0];
+  return { inicio, fin };
+}
+
 function EmployeeReportPage() {
-  const report = mockEmployeeReport;
+  const { employeeId } = useParams();
+  const employeeCode = employeeId; // La ruta usa :employeeId pero pasamos el código
+  const defaults = getDefaultDates();
+
+  const [fechaInicio, setFechaInicio] = useState(defaults.inicio);
+  const [fechaFin, setFechaFin] = useState(defaults.fin);
+  const [report, setReport] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [downloading, setDownloading] = useState("");
+
+  useEffect(() => {
+    if (employeeCode && fechaInicio && fechaFin) {
+      loadReport();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function loadReport() {
+    if (!employeeCode || !fechaInicio || !fechaFin) return;
+
+    setLoading(true);
+    setError("");
+    try {
+      const data = await getReporteEmpleadoJSON(employeeCode, fechaInicio, fechaFin);
+      setReport(data);
+    } catch (err) {
+      setError(err.message || "Error al generar reporte.");
+      setReport(null);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleDownloadCSV() {
+    setDownloading("csv");
+    try {
+      await descargarReporteEmpleadoCSV(employeeCode, fechaInicio, fechaFin);
+    } catch (err) {
+      alert("Error al descargar CSV: " + err.message);
+    } finally {
+      setDownloading("");
+    }
+  }
+
+  async function handleDownloadPDF() {
+    setDownloading("pdf");
+    try {
+      await descargarReporteEmpleadoPDF(employeeCode, fechaInicio, fechaFin);
+    } catch (err) {
+      alert("Error al descargar PDF: " + err.message);
+    } finally {
+      setDownloading("");
+    }
+  }
 
   return (
     <div className="page-stack">
       <PageHeader
         title="Reporte individual"
-        description="Vista previa del reporte de asistencia e incidencias por empleado."
+        description="Reporte de asistencia por empleado con exportación CSV y PDF."
       >
         <div className="header-actions">
           <Link className="secondary-button link-button" to="/reports">
@@ -33,251 +140,248 @@ function EmployeeReportPage() {
             Volver
           </Link>
 
-          <button className="secondary-button" type="button">
-            <Printer size={17} />
-            Imprimir
-          </button>
+          {report && (
+            <>
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={handleDownloadCSV}
+                disabled={!!downloading}
+              >
+                <FileSpreadsheet size={17} />
+                {downloading === "csv" ? "Descargando..." : "CSV"}
+              </button>
 
-          <button className="primary-button" type="button">
-            <Download size={17} />
-            Exportar PDF
-          </button>
+              <button
+                className="primary-button"
+                type="button"
+                onClick={handleDownloadPDF}
+                disabled={!!downloading}
+              >
+                <Download size={17} />
+                {downloading === "pdf" ? "Descargando..." : "PDF"}
+              </button>
+            </>
+          )}
         </div>
       </PageHeader>
 
-      <section className="report-paper">
-        <div className="report-institutional-header">
-          <div className="report-logo-box">
-            <ShieldCheck size={34} />
+      {/* Filtros de fecha */}
+      <section className="panel-card">
+        <div className="filters-row">
+          <div className="filter-field">
+            <label htmlFor="rep-fecha-inicio">Desde</label>
+            <input
+              id="rep-fecha-inicio"
+              type="date"
+              value={fechaInicio}
+              onChange={(e) => setFechaInicio(e.target.value)}
+            />
           </div>
 
-          <div>
-            <p>Dirección de Administración Escolar</p>
-            <h1>{report.title}</h1>
-            <span>
-              Periodo del {report.periodStart} al {report.periodEnd}
-            </span>
+          <div className="filter-field">
+            <label htmlFor="rep-fecha-fin">Hasta</label>
+            <input
+              id="rep-fecha-fin"
+              type="date"
+              value={fechaFin}
+              onChange={(e) => setFechaFin(e.target.value)}
+            />
           </div>
 
-          <div className="report-folio">
-            <span>Folio</span>
-            <strong>{report.reportFolio}</strong>
-          </div>
+          <button
+            className="primary-button"
+            type="button"
+            onClick={loadReport}
+            disabled={loading}
+          >
+            {loading ? <Loader size={17} /> : <FileText size={17} />}
+            {loading ? "Generando..." : "Generar reporte"}
+          </button>
         </div>
-
-        <div className="report-meta-grid">
-          <div>
-            <span>Fecha de generación</span>
-            <strong>{report.generatedAt}</strong>
-          </div>
-
-          <div>
-            <span>Generado por</span>
-            <strong>{report.generatedBy}</strong>
-          </div>
-
-          <div>
-            <span>Usuario ZKTeco</span>
-            <strong>{report.employee.zkUserId}</strong>
-          </div>
-
-          <div>
-            <span>Código empleado</span>
-            <strong>{report.employee.employeeCode}</strong>
-          </div>
-        </div>
-
-        <section className="report-section">
-          <div className="report-section-title">
-            <FileText size={18} />
-            <h2>Datos del empleado</h2>
-          </div>
-
-          <div className="report-info-grid">
-            <div>
-              <span>RFC</span>
-              <strong>{report.employee.rfc}</strong>
-            </div>
-
-            <div>
-              <span>Nombre</span>
-              <strong>{report.employee.fullName}</strong>
-            </div>
-
-            <div>
-              <span>Área</span>
-              <strong>{report.employee.department}</strong>
-            </div>
-
-            <div>
-              <span>Puesto</span>
-              <strong>{report.employee.position}</strong>
-            </div>
-
-            <div>
-              <span>Supervisor</span>
-              <strong>{report.employee.supervisor}</strong>
-            </div>
-
-            <div>
-              <span>Horario asignado</span>
-              <strong>{report.employee.schedule}</strong>
-            </div>
-          </div>
-        </section>
-
-        <section className="report-section">
-          <div className="report-section-title">
-            <FileText size={18} />
-            <h2>Resumen del periodo</h2>
-          </div>
-
-          <div className="report-summary-grid">
-            <div>
-              <span>Días laborables</span>
-              <strong>{report.summary.workDays}</strong>
-            </div>
-
-            <div>
-              <span>Días trabajados</span>
-              <strong>{report.summary.workedDays}</strong>
-            </div>
-
-            <div>
-              <span>Faltas</span>
-              <strong>{report.summary.absences}</strong>
-            </div>
-
-            <div>
-              <span>Retardos</span>
-              <strong>{report.summary.delays}</strong>
-            </div>
-
-            <div>
-              <span>Incidencias pendientes</span>
-              <strong>{report.summary.pendingIncidents}</strong>
-            </div>
-
-            <div>
-              <span>Horas ordinarias</span>
-              <strong>{report.summary.ordinaryTime}</strong>
-            </div>
-
-            <div>
-              <span>Horas extra</span>
-              <strong>{report.summary.extraTime}</strong>
-            </div>
-
-            <div>
-              <span>Asistencia</span>
-              <strong>{report.summary.attendancePercent}</strong>
-            </div>
-          </div>
-        </section>
-
-        <section className="report-section">
-          <div className="report-section-title">
-            <FileText size={18} />
-            <h2>Detalle diario de asistencia</h2>
-          </div>
-
-          <div className="simple-table report-table">
-            <table>
-              <thead>
-                <tr>
-                  <th>Fecha</th>
-                  <th>Día</th>
-                  <th>Horario</th>
-                  <th>Entrada</th>
-                  <th>Salida</th>
-                  <th>Retardo</th>
-                  <th>Ordinario</th>
-                  <th>Extra inicio</th>
-                  <th>Extra fin</th>
-                  <th>Extra</th>
-                  <th>Estado</th>
-                  <th>Tratamiento</th>
-                </tr>
-              </thead>
-
-              <tbody>
-                {report.dailyRows.map((row) => (
-                  <tr key={row.date}>
-                    <td>{row.date}</td>
-                    <td>{row.day}</td>
-                    <td>{row.expectedSchedule}</td>
-                    <td>{row.entryTime || "—"}</td>
-                    <td>{row.exitTime || "—"}</td>
-                    <td>{row.lateMinutes} min</td>
-                    <td>{row.ordinaryTime}</td>
-                    <td>{row.extraStart || "—"}</td>
-                    <td>{row.extraEnd || "—"}</td>
-                    <td>{row.extraTime}</td>
-                    <td>
-                      <span className={getStatusClass(row.status)}>
-                        {row.status}
-                      </span>
-                    </td>
-                    <td>{row.treatment}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </section>
-
-        <section className="report-section">
-          <div className="report-section-title">
-            <FileText size={18} />
-            <h2>Incidencias relacionadas</h2>
-          </div>
-
-          <div className="simple-table report-table">
-            <table>
-              <thead>
-                <tr>
-                  <th>Folio</th>
-                  <th>Fecha</th>
-                  <th>Tipo</th>
-                  <th>Estatus</th>
-                  <th>Descripción</th>
-                </tr>
-              </thead>
-
-              <tbody>
-                {report.incidents.map((incident) => (
-                  <tr key={incident.folio}>
-                    <td>{incident.folio}</td>
-                    <td>{incident.date}</td>
-                    <td>{incident.type}</td>
-                    <td>
-                      <span className="badge warning">{incident.status}</span>
-                    </td>
-                    <td>{incident.description}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </section>
-
-        <section className="report-signatures">
-          <div>
-            <span>Empleado</span>
-            <strong>{report.employee.fullName}</strong>
-          </div>
-
-          <div>
-            <span>Supervisor / RH</span>
-            <strong>Nombre y firma</strong>
-          </div>
-
-          <div>
-            <span>Super Admin</span>
-            <strong>Nombre y firma</strong>
-          </div>
-        </section>
       </section>
+
+      {/* Error */}
+      {error && (
+        <div className="panel-card">
+          <div className="empty-state">
+            <h3>Error</h3>
+            <p>{error}</p>
+          </div>
+        </div>
+      )}
+
+      {/* Loading */}
+      {loading && (
+        <div className="panel-card">
+          <div className="empty-state">
+            <h3>Generando reporte...</h3>
+            <p>Consultando datos de asistencia del empleado.</p>
+          </div>
+        </div>
+      )}
+
+      {/* Reporte */}
+      {!loading && report && (
+        <section className="report-paper">
+          <div className="report-institutional-header">
+            <div className="report-logo-box">
+              <ShieldCheck size={34} />
+            </div>
+
+            <div>
+              <p>Dirección de Administración Escolar</p>
+              <h1>Reporte de Asistencia</h1>
+              <span>
+                Periodo del {formatDate(report.fecha_inicio)} al {formatDate(report.fecha_fin)}
+              </span>
+            </div>
+          </div>
+
+          {/* Datos del empleado */}
+          <section className="report-section">
+            <div className="report-section-title">
+              <FileText size={18} />
+              <h2>Datos del empleado</h2>
+            </div>
+
+            <div className="report-info-grid">
+              <div>
+                <span>Código</span>
+                <strong>{report.empleado.codigo_empleado}</strong>
+              </div>
+              <div>
+                <span>Nombre</span>
+                <strong>{report.empleado.nombre_completo}</strong>
+              </div>
+              <div>
+                <span>Puesto</span>
+                <strong>{report.empleado.puesto || "N/A"}</strong>
+              </div>
+              <div>
+                <span>Área</span>
+                <strong>{report.empleado.unidad_organizacional || "N/A"}</strong>
+              </div>
+            </div>
+          </section>
+
+          {/* Resumen */}
+          <section className="report-section">
+            <div className="report-section-title">
+              <FileText size={18} />
+              <h2>Resumen del periodo</h2>
+            </div>
+
+            <div className="report-summary-grid">
+              <div>
+                <span>Días en periodo</span>
+                <strong>{report.resumen.dias_periodo}</strong>
+              </div>
+              <div>
+                <span>Días completos</span>
+                <strong>{report.resumen.dias_completos}</strong>
+              </div>
+              <div>
+                <span>Retardos menores</span>
+                <strong>{report.resumen.retardos_menores}</strong>
+              </div>
+              <div>
+                <span>Retardos mayores</span>
+                <strong>{report.resumen.retardos_mayores}</strong>
+              </div>
+              <div>
+                <span>Faltas</span>
+                <strong>{report.resumen.faltas}</strong>
+              </div>
+              <div>
+                <span>Total puntos</span>
+                <strong>{report.resumen.total_puntos}</strong>
+              </div>
+              <div>
+                <span>Horas ordinarias</span>
+                <strong>{minutosAHoras(report.resumen.total_minutos_ordinarios)}</strong>
+              </div>
+              <div>
+                <span>Horas extra</span>
+                <strong>{minutosAHoras(report.resumen.total_minutos_extra)}</strong>
+              </div>
+              <div>
+                <span>Asistencia</span>
+                <strong>{report.resumen.porcentaje_asistencia}%</strong>
+              </div>
+            </div>
+          </section>
+
+          {/* Detalle diario */}
+          <section className="report-section">
+            <div className="report-section-title">
+              <FileText size={18} />
+              <h2>Detalle diario</h2>
+            </div>
+
+            <div className="simple-table report-table">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Fecha</th>
+                    <th>Ent. prog.</th>
+                    <th>Sal. prog.</th>
+                    <th>Entrada</th>
+                    <th>Salida</th>
+                    <th>Retardo</th>
+                    <th>Ordinario</th>
+                    <th>Extra</th>
+                    <th>Estatus</th>
+                    <th>Puntos</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {report.dias.map((dia) => (
+                    <tr key={dia.fecha}>
+                      <td>{formatDate(dia.fecha)}</td>
+                      <td>{formatTime(dia.entrada_programada)}</td>
+                      <td>{formatTime(dia.salida_programada)}</td>
+                      <td>{formatTime(dia.primera_entrada)}</td>
+                      <td>{formatTime(dia.ultima_salida)}</td>
+                      <td>{dia.minutos_retardo || 0} min</td>
+                      <td>{minutosAHoras(dia.minutos_ordinarios)}</td>
+                      <td>{minutosAHoras(dia.minutos_extra)}</td>
+                      <td>
+                        <span className={getStatusClass(dia.estatus)}>
+                          {getStatusLabel(dia.estatus)}
+                        </span>
+                      </td>
+                      <td>{dia.puntos_generados || 0}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {report.dias.length === 0 && (
+              <div className="empty-state">
+                <p>No hay registros de asistencia en el periodo seleccionado.</p>
+              </div>
+            )}
+          </section>
+
+          {/* Firmas */}
+          <section className="report-signatures">
+            <div>
+              <span>Empleado</span>
+              <strong>{report.empleado.nombre_completo}</strong>
+            </div>
+            <div>
+              <span>Supervisor / RH</span>
+              <strong>Nombre y firma</strong>
+            </div>
+            <div>
+              <span>Dirección</span>
+              <strong>Nombre y firma</strong>
+            </div>
+          </section>
+        </section>
+      )}
     </div>
   );
 }

@@ -19,6 +19,8 @@ import PageHeader from "../layout/PageHeader";
 import { empleadosApi } from "../../api/empleadosApi";
 
 import { catalogosApi } from "../../api/catalogosApi";
+import { horariosApi } from "../../api/horariosApi";
+import { getRoles } from "../../api/usuariosApi";
 import {
   getScheduleDescription,
 } from "../../data/mockCatalogs";
@@ -39,6 +41,7 @@ const INITIAL_SCHEDULE_FORM = {
   endTime: "17:00",
   toleranceMinutes: "10",
   breakMinutes: "0",
+  tipoTurnoId: "",
 };
 
 
@@ -156,6 +159,72 @@ function buildEmployeeCreatePayload(
     estatus: toBackendEmployeeStatus(form.status),
   };
 }
+
+function buildAltaIntegralPayload(form) {
+  return {
+    nombres: normalizeName(form.firstNames),
+
+    apellido_paterno: normalizeName(
+      form.paternalSurname,
+    ),
+
+    apellido_materno:
+      form.maternalSurname.trim()
+        ? normalizeName(form.maternalSurname)
+        : null,
+
+    rfc:
+      form.rfc.trim().toUpperCase(),
+
+    curp: null,
+
+    telefono: null,
+
+    correo_personal:
+      form.email.trim().toLowerCase(),
+
+    tipo_contratacion_id: 8,
+
+    fecha_ingreso:
+      form.fechaIngreso,
+
+    puesto_id:
+      Number(form.positionId),
+
+    unidad_organizacional_id:
+      Number(
+        form.departmentId ||
+        form.mainUnitId
+      ),
+
+    supervisor_id:
+      form.supervisorId === "none" ||
+      !form.supervisorId
+        ? null
+        : Number(form.supervisorId),
+
+    horario_id:
+      Number(form.scheduleId),
+
+    observaciones:
+      null,
+
+    registrar_en_reloj:
+      true,
+
+    todos_dispositivos_activos:
+      true,
+
+    dispositivo_ids: [],
+
+    zk_user_id:
+      form.zkUserId ? String(form.zkUserId).trim() : null,
+
+    rol_id:
+      form.roleId ? Number(form.roleId) : null,
+  };
+}
+
 
 function buildEmployeeUpdatePayload(form) {
   const unidadOrganizacionalId = Number(
@@ -558,6 +627,11 @@ function EmployeeForm({
           initialEmployee.scheduleId
             ? String(initialEmployee.scheduleId)
             : "",
+
+        roleId:
+          initialEmployee.roleId
+            ? String(initialEmployee.roleId)
+            : "",
       };
     }
 
@@ -577,6 +651,7 @@ function EmployeeForm({
       position: "",
       supervisorId: "",
       scheduleId: "",
+      roleId: "",
     };
   }, [
     isEditMode,
@@ -597,6 +672,8 @@ function EmployeeForm({
   const [schedules, setSchedules] = useState([]);
   const [departments, setDepartments] = useState([]);
   const [positions, setPositions] = useState([]);
+  const [rolesOptions, setRolesOptions] = useState([]);
+  const [tiposTurno, setTiposTurno] = useState([]);
   const [isLoadingCatalogs, setIsLoadingCatalogs] =
     useState(false);
   const [catalogsError, setCatalogsError] = useState("");
@@ -651,10 +728,14 @@ function EmployeeForm({
             departmentsResponse,
             positionsResponse,
             schedulesResponse,
+            rolesResponse,
+            tiposTurnoResponse,
           ] = await Promise.all([
             catalogosApi.listarUnidadesOrganizacionales(),
             catalogosApi.listarPuestos(),
             catalogosApi.listarHorarios(),
+            getRoles(),
+            catalogosApi.listarTiposTurno(),
           ]);
 
           if (!isMounted) return;
@@ -691,6 +772,16 @@ function EmployeeForm({
               (schedule) => schedule.activo,
             ),
           );
+
+          const rolesFromApi = Array.isArray(rolesResponse)
+            ? rolesResponse
+            : [];
+          setRolesOptions(rolesFromApi);
+
+          const tiposTurnoFromApi = Array.isArray(tiposTurnoResponse)
+            ? tiposTurnoResponse
+            : [];
+          setTiposTurno(tiposTurnoFromApi.filter((t) => t.activo));
         } catch (error) {
           if (!isMounted) return;
 
@@ -953,16 +1044,28 @@ function EmployeeForm({
     }));
   }
 
-  function suggestZkUserId() {
-    setForm((currentForm) => ({
-      ...currentForm,
-      zkUserId: suggestedZkUserId,
-    }));
-
-    setErrors((currentErrors) => ({
-      ...currentErrors,
-      zkUserId: undefined,
-    }));
+  async function suggestZkUserId() {
+    try {
+      const data = await empleadosApi.obtenerSiguienteZkUserId();
+      setForm((currentForm) => ({
+        ...currentForm,
+        zkUserId: data.zk_user_id || suggestedZkUserId,
+      }));
+      setErrors((currentErrors) => ({
+        ...currentErrors,
+        zkUserId: undefined,
+      }));
+    } catch {
+      // Fallback al cálculo local si el endpoint falla
+      setForm((currentForm) => ({
+        ...currentForm,
+        zkUserId: suggestedZkUserId,
+      }));
+      setErrors((currentErrors) => ({
+        ...currentErrors,
+        zkUserId: undefined,
+      }));
+    }
   }
   function openScheduleModal() {
     setScheduleForm(INITIAL_SCHEDULE_FORM);
@@ -1059,7 +1162,7 @@ function EmployeeForm({
     return validationErrors;
   }
 
-  function saveQuickSchedule() {
+  async function saveQuickSchedule() {
     const validationErrors = validateSchedule();
 
     if (Object.keys(validationErrors).length > 0) {
@@ -1067,42 +1170,68 @@ function EmployeeForm({
       return;
     }
 
-    const nextScheduleId =
-      Math.max(
-        0,
-        ...schedules.map((schedule) => schedule.id),
-      ) + 1;
+    // Crear horario en backend
+    try {
+      // Determinar tipo de turno: usar el seleccionado o el primero disponible
+      let tipoTurnoId = scheduleForm.tipoTurnoId
+        ? Number(scheduleForm.tipoTurnoId)
+        : null;
 
-    const orderedDays = WEEK_DAYS.filter((day) =>
-      scheduleForm.days.includes(day),
-    );
+      if (!tipoTurnoId && tiposTurno.length > 0) {
+        // Inferir por hora de entrada: antes de 12:00 → matutino, después → vespertino
+        const hora = Number(scheduleForm.startTime.split(":")[0]);
+        const turnoMatutino = tiposTurno.find(
+          (t) => t.codigo?.toUpperCase().includes("MATUTINO")
+        );
+        const turnoVespertino = tiposTurno.find(
+          (t) => t.codigo?.toUpperCase().includes("VESPERTINO")
+        );
 
-    const newSchedule = {
-      id: nextScheduleId,
-      name: scheduleForm.name.trim(),
-      days: orderedDays,
-      startTime: scheduleForm.startTime,
-      endTime: scheduleForm.endTime,
-      toleranceMinutes: Number(
-        scheduleForm.toleranceMinutes,
-      ),
-      breakMinutes: Number(
-        scheduleForm.breakMinutes,
-      ),
-      crossesMidnight:
-        scheduleForm.endTime < scheduleForm.startTime,
-      isActive: true,
-    };
+        if (hora < 12 && turnoMatutino) {
+          tipoTurnoId = turnoMatutino.id;
+        } else if (hora >= 12 && turnoVespertino) {
+          tipoTurnoId = turnoVespertino.id;
+        } else {
+          tipoTurnoId = tiposTurno[0].id;
+        }
+      }
 
-    setSchedules((currentSchedules) => [
-      ...currentSchedules,
-      newSchedule,
-    ]);
+      if (!tipoTurnoId) {
+        setScheduleErrors({ submit: "No hay tipos de turno disponibles. Crea uno desde el módulo de Horarios." });
+        return;
+      }
 
-    setForm((currentForm) => ({
-      ...currentForm,
-      scheduleId: String(newSchedule.id),
-    }));
+      const payload = {
+        nombre: scheduleForm.name.trim(),
+        codigo: scheduleForm.name.trim().toUpperCase().replace(/\s+/g, "_").replace(/[^A-Z0-9_]/g, "").slice(0, 30),
+        hora_entrada: scheduleForm.startTime,
+        hora_salida: scheduleForm.endTime,
+        tolerancia_entrada_minutos: Number(scheduleForm.toleranceMinutes) || 10,
+        descanso_minutos: Number(scheduleForm.breakMinutes) || 0,
+        tipo_turno_id: tipoTurnoId,
+        permite_tiempo_extra: true,
+      };
+
+      const created = await horariosApi.crear(payload);
+      const newId = created?.id || created?.horario?.id;
+
+      if (newId) {
+        // Recargar catálogo de horarios
+        const updatedSchedules = await catalogosApi.listarHorarios();
+        const scheduleArray = Array.isArray(updatedSchedules) ? updatedSchedules : (updatedSchedules?.items || []);
+        setSchedules(scheduleArray.filter((h) => h.activo));
+
+        setForm((currentForm) => ({
+          ...currentForm,
+          scheduleId: String(newId),
+        }));
+      }
+
+      closeScheduleModal();
+    } catch (err) {
+      setScheduleErrors({ submit: err.message || "Error al crear horario." });
+      return;
+    }
 
     setErrors((currentErrors) => ({
       ...currentErrors,
@@ -1218,40 +1347,28 @@ function EmployeeForm({
         return;
       }
 
-      const createPayload = buildEmployeeCreatePayload(
-        form,
-        automaticEmployeeCode,
-      );
+      const altaIntegralPayload =
+          buildAltaIntegralPayload(form);
 
       const createdEmployee =
-        await empleadosApi.crear(createPayload);
+          await empleadosApi.crearAltaIntegral(
+              altaIntegralPayload,
+          );
 
       const savedEmployeeFromApi =
         mapSavedEmployeeFromApi(createdEmployee, form);
 
-      const schedulePayload =
-        buildEmployeeSchedulePayload(form);
-
-      await empleadosApi.asignarHorario(
-        savedEmployeeFromApi.employeeCode,
-        schedulePayload,
-      );
-
-      const devicePayload = buildEmployeeDevicePayload(
-        form,
-        savedEmployeeFromApi,
-      );
-
-      await empleadosApi.asignarDispositivo(
-        savedEmployeeFromApi.employeeCode,
-        devicePayload,
-      );
+      // Incluir resultado de sincronización ZKTeco
+      savedEmployeeFromApi.sincronizacionResultado = createdEmployee.sincronizacion_resultado;
+      savedEmployeeFromApi.sincronizacionSolicitada = createdEmployee.sincronizacion_solicitada;
+      savedEmployeeFromApi.dispositivos = createdEmployee.dispositivos;
 
       setSavedEmployee(savedEmployeeFromApi);
 
+      // Dar más tiempo para que el usuario vea el resultado ZK
       setTimeout(() => {
         navigate("/employees");
-      }, 900);
+      }, 4000);
     } catch (error) {
       setErrors({
         submit:
@@ -1312,10 +1429,32 @@ function EmployeeForm({
             </strong>
 
             <p>
-              {isEditMode
-                ? `${savedEmployee.fullName} backend.`
-                : `${savedEmployee.fullName} backend.`}
+              {savedEmployee.fullName} — Registrado en base de datos.
             </p>
+
+            {savedEmployee.sincronizacionSolicitada && (
+              <div style={{ marginTop: "8px", fontSize: "0.85rem" }}>
+                {savedEmployee.sincronizacionResultado?.exitosos > 0 ? (
+                  <p style={{ color: "#166534" }}>
+                    Usuario ZKTeco creado en reloj. Huella pendiente de enrolar.
+                  </p>
+                ) : savedEmployee.sincronizacionResultado?.error ? (
+                  <p style={{ color: "#991b1b" }}>
+                    No fue posible registrar en el reloj: {savedEmployee.sincronizacionResultado.error}.
+                    Estado ZKTeco: Pendiente. Puedes reintentar desde el detalle del empleado.
+                  </p>
+                ) : savedEmployee.sincronizacionResultado?.errores > 0 ? (
+                  <p style={{ color: "#991b1b" }}>
+                    Error al sincronizar con el reloj. Estado ZKTeco: Pendiente/Error.
+                    Reintenta desde el detalle del empleado.
+                  </p>
+                ) : (
+                  <p style={{ color: "#6b7280" }}>
+                    Sincronización ZKTeco pendiente.
+                  </p>
+                )}
+              </div>
+            )}
           </div>
         </section>
       )}
@@ -1583,6 +1722,39 @@ function EmployeeForm({
                 </option>
               </select>
             </div>
+
+            <div className="form-field">
+              <label htmlFor="roleId">
+                Rol en el sistema
+              </label>
+
+              <select
+                id="roleId"
+                name="roleId"
+                value={form.roleId}
+                onChange={handleChange}
+                disabled={isLoadingCatalogs}
+              >
+                <option value="">
+                  {isLoadingCatalogs
+                    ? "Cargando roles..."
+                    : "Empleado (por defecto)"}
+                </option>
+
+                {rolesOptions.map((rol) => (
+                  <option
+                    key={rol.id}
+                    value={rol.id}
+                  >
+                    {rol.nombre}
+                  </option>
+                ))}
+              </select>
+
+              <span className="field-help">
+                Define el nivel de acceso al sistema web. Si no se selecciona, se asigna rol Empleado.
+              </span>
+            </div>
           </div>
         </div>
 
@@ -1839,17 +2011,41 @@ function EmployeeForm({
                   ))}
                 </select>
 
+                <button
+                  className="primary-button compact-button"
+                  type="button"
+                  onClick={openScheduleModal}
+                  title="Crear horario rápido sin salir del formulario"
+                >
+                  <Plus size={16} />
+                  Crear nuevo horario
+                </button>
+
                 <Link
                   className="secondary-button compact-button link-button"
                   to="/schedules"
-                  title="Ir al módulo de horarios"
+                  target="_blank"
+                  title="Abrir módulo de horarios en otra pestaña"
                 >
-                  <Plus size={16} />
                   Administrar horarios
                 </Link>
               </div>
+
+              {/* Preview del horario seleccionado */}
+              {form.scheduleId && (() => {
+                const sel = activeSchedules.find(s => String(s.id) === String(form.scheduleId));
+                if (!sel) return null;
+                return (
+                  <div className="schedule-preview" style={{ marginTop: "8px", padding: "10px 14px", background: "#f9fafb", borderRadius: "8px", border: "1px solid #e5e7eb", fontSize: "0.82rem", color: "#374151" }}>
+                    <strong>{sel.nombre || sel.name}</strong>
+                    {sel.hora_entrada && <span style={{ marginLeft: "12px" }}>{String(sel.hora_entrada).slice(0,5)} – {String(sel.hora_salida).slice(0,5)}</span>}
+                    {sel.tolerancia_entrada_minutos != null && <span style={{ marginLeft: "12px" }}>Tolerancia: {sel.tolerancia_entrada_minutos} min</span>}
+                  </div>
+                );
+              })()}
+
               <span className="field-help">
-                Selecciona un horario existente. La creación y edición de horarios se hace desde el módulo Horarios.
+                Selecciona un horario existente o crea uno nuevo sin salir del formulario.
               </span>
               {errors.scheduleId && (
                 <span className="field-error">
@@ -1994,6 +2190,33 @@ function EmployeeForm({
               </div>
 
               <div className="modal-form-grid">
+                <div className="form-field">
+                  <label htmlFor="scheduleTipoTurno">
+                    Tipo de turno
+                  </label>
+
+                  <select
+                    id="scheduleTipoTurno"
+                    name="tipoTurnoId"
+                    value={scheduleForm.tipoTurnoId}
+                    onChange={handleScheduleChange}
+                  >
+                    <option value="">
+                      Automático (según hora de entrada)
+                    </option>
+
+                    {tiposTurno.map((tipo) => (
+                      <option key={tipo.id} value={tipo.id}>
+                        {tipo.nombre}
+                      </option>
+                    ))}
+                  </select>
+
+                  <span className="field-help">
+                    Si no seleccionas, se asigna según la hora de entrada.
+                  </span>
+                </div>
+
                 <div className="form-field">
                   <label htmlFor="scheduleStartTime">
                     Hora de entrada

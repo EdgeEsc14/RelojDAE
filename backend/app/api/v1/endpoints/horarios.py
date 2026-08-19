@@ -3,7 +3,8 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.core.auth_dependencies import get_current_user, require_roles
+from app.core.access_control import AccessScope
+from app.core.auth_dependencies import require_module_access
 from app.core.database import get_db
 from app.repositories.horarios_repo import (
     actualizar_estatus_horario,
@@ -22,15 +23,21 @@ from app.schemas.horarios import (
 router = APIRouter(
     prefix="/horarios",
     tags=["Horarios"],
-    dependencies=[
-        Depends(get_current_user),
-    ],
 )
 
 
 @router.get("", response_model=HorariosListadoResponse)
 def get_horarios(
     db: Annotated[Session, Depends(get_db)],
+    _access_scope: Annotated[
+        AccessScope,
+        Depends(
+            require_module_access(
+                "HORARIOS",
+                "consultar",
+            )
+        ),
+    ],
 ) -> dict:
     return listar_horarios_admin(db=db)
 
@@ -39,6 +46,15 @@ def get_horarios(
 def get_horario_por_id(
     horario_id: int,
     db: Annotated[Session, Depends(get_db)],
+    _access_scope: Annotated[
+        AccessScope,
+        Depends(
+            require_module_access(
+                "HORARIOS",
+                "consultar",
+            )
+        ),
+    ],
 ) -> dict:
     horario = obtener_horario_por_id(
         db=db,
@@ -62,10 +78,15 @@ def get_horario_por_id(
 def post_horario(
     payload: HorarioCreate,
     db: Annotated[Session, Depends(get_db)],
-    _current_user: Annotated[
-        dict,
-        Depends(require_roles("super_admin", "rh_admin")),
-    ] = None,
+    _access_scope: Annotated[
+        AccessScope,
+        Depends(
+            require_module_access(
+                "HORARIOS",
+                "crear",
+            )
+        ),
+    ],
 ) -> dict:
     try:
         return crear_horario(
@@ -85,10 +106,15 @@ def patch_estatus_horario(
     horario_id: int,
     payload: HorarioEstatusUpdate,
     db: Annotated[Session, Depends(get_db)],
-    _current_user: Annotated[
-        dict,
-        Depends(require_roles("super_admin", "rh_admin")),
-    ] = None,
+    _access_scope: Annotated[
+        AccessScope,
+        Depends(
+            require_module_access(
+                "HORARIOS",
+                "editar",
+            )
+        ),
+    ],
 ) -> dict:
     horario = actualizar_estatus_horario(
         db=db,

@@ -267,7 +267,7 @@ def listar_dispositivos(
             ubicacion,
             activo,
             ultima_conexion,
-            ultima_sincronizacion
+            ultima_sincronizacion_marcaciones AS ultima_sincronizacion
         FROM dispositivos.dispositivos
         {where_sql}
         ORDER BY
@@ -389,6 +389,44 @@ def listar_tipos_incidencia(
 
     return [dict(row) for row in rows]
 
+def listar_tipos_contratacion(
+    db: Session,
+    q: str | None = None,
+    activo: bool | None = True,
+) -> list[dict]:
+
+    where_sql, params = _crear_filtros_basicos(
+        q=q,
+        activo=activo,
+    )
+
+    query = text(
+        f"""
+        SELECT
+            id,
+            codigo,
+            nombre,
+            descripcion,
+            activo
+        FROM personal.tipos_contratacion
+        {where_sql}
+        ORDER BY
+            codigo,
+            nombre
+        """
+    )
+
+    rows = db.execute(
+        query,
+        params,
+    ).mappings().all()
+
+    return [
+        dict(row)
+        for row in rows
+    ]
+
+
 
 def obtener_todos_catalogos(db: Session) -> dict:
     return {
@@ -400,4 +438,41 @@ def obtener_todos_catalogos(db: Session) -> dict:
         "roles": listar_roles(db=db),
         "tipos_marcacion": listar_tipos_marcacion(db=db),
         "tipos_incidencia": listar_tipos_incidencia(db=db),
+        "tipos_contratacion": listar_tipos_contratacion(db=db),
     }
+
+def listar_tipos_contratacion(
+    db: Session,
+    q: str | None = None,
+    activo: bool | None = True,
+) -> list[dict]:
+    where_sql, params = _crear_filtros_basicos(
+        q=q,
+        activo=activo,
+    )
+
+    query = text(
+        f"""
+        SELECT
+            id,
+            codigo,
+            nombre,
+            descripcion,
+            activo
+        FROM personal.tipos_contratacion
+        {where_sql}
+        ORDER BY
+            codigo,
+            nombre
+        """
+    )
+
+    rows = db.execute(
+        query,
+        params,
+    ).mappings().all()
+
+    return [
+        dict(row)
+        for row in rows
+    ]

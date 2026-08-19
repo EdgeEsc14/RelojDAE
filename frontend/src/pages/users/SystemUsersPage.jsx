@@ -1,5 +1,10 @@
+import { useEffect, useState } from "react";
+
 import {
-  Download,
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  Edit,
   KeyRound,
   LockKeyhole,
   Plus,
@@ -9,71 +14,303 @@ import {
   SlidersHorizontal,
   UserCog,
   Users,
+  X,
+  XCircle,
 } from "lucide-react";
 
 import PageHeader from "../../components/layout/PageHeader";
 import {
-  mockPermissionMatrix,
-  mockRoles,
-  mockSystemUsers,
-} from "../../data/mockSystemUsers";
+  getUsuarios,
+  getRoles,
+  crearUsuario,
+  actualizarUsuario,
+  desactivarUsuario,
+} from "../../api/usuariosApi";
+
 
 function getStatusClass(status) {
-  if (status === "Activo") return "badge success";
-  if (status === "Bloqueado") return "badge danger";
-  if (status === "Pendiente") return "badge warning";
-  if (status === "No activo") return "badge neutral";
+  const s = (status || "").toUpperCase();
+  if (s === "ACTIVO") return "badge success";
+  if (s === "BLOQUEADO") return "badge danger";
+  if (s === "INACTIVO") return "badge neutral";
+  if (s.startsWith("PENDIENTE")) return "badge warning";
   return "badge neutral";
 }
 
-function getRoleClass(role) {
-  if (role === "Super Admin") return "badge danger";
-  if (role === "RH/Admin") return "badge warning";
-  if (role === "Auditor") return "badge neutral";
-  if (role === "Supervisor") return "badge success";
+function getStatusLabel(status) {
+  const s = (status || "").toUpperCase();
+  if (s === "ACTIVO") return "Activo";
+  if (s === "BLOQUEADO") return "Bloqueado";
+  if (s === "INACTIVO") return "Inactivo";
+  if (s === "PENDIENTE_VERIFICACION") return "Pendiente verificación";
+  if (s === "PENDIENTE_APROBACION") return "Pendiente aprobación";
+  return status || "Desconocido";
+}
+
+function getRoleClass(rolCodigo) {
+  const r = (rolCodigo || "").toUpperCase();
+  if (r === "SUPER_ADMIN") return "badge danger";
+  if (r === "RH_ADMIN") return "badge warning";
+  if (r === "AUDITOR") return "badge neutral";
+  if (r === "SUPERVISOR") return "badge success";
   return "badge neutral";
 }
 
-function renderPermission(value) {
-  if (value === true) return <span className="permission-dot allow">Sí</span>;
-  if (value === false) return <span className="permission-dot deny">No</span>;
-
-  return <span className="permission-dot partial">{value}</span>;
-}
 
 function SystemUsersPage() {
-  const activeUsers = mockSystemUsers.filter((user) => user.status === "Activo").length;
-  const blockedUsers = mockSystemUsers.filter((user) => user.status === "Bloqueado").length;
-  const criticalRoles = mockRoles.filter((role) => role.level === "Crítico").length;
+  // Data state
+  const [usuarios, setUsuarios] = useState([]);
+  const [roles, setRoles] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  // Filters
+  const [busqueda, setBusqueda] = useState("");
+  const [filtroRolId, setFiltroRolId] = useState("");
+  const [filtroEstatus, setFiltroEstatus] = useState("");
+  const [showFilters, setShowFilters] = useState(false);
+
+  // Pagination
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+
+  // Modal state
+  const [showModal, setShowModal] = useState(false);
+  const [editingUser, setEditingUser] = useState(null);
+  const [formData, setFormData] = useState({
+    correo_electronico: "",
+    password: "",
+    rol_id: "",
+    nombre_usuario: "",
+    empleado_id: "",
+    requiere_cambio_password: true,
+  });
+  const [formError, setFormError] = useState("");
+  const [formLoading, setFormLoading] = useState(false);
+
+  // Load roles on mount
+  useEffect(() => {
+    async function loadRoles() {
+      try {
+        const data = await getRoles();
+        setRoles(data);
+      } catch (err) {
+        console.error("Error cargando roles:", err.message);
+      }
+    }
+    loadRoles();
+  }, []);
+
+  // Load users when filters/page change
+  useEffect(() => {
+    loadUsuarios();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, pageSize, filtroRolId, filtroEstatus]);
+
+  async function loadUsuarios() {
+    try {
+      setLoading(true);
+      setError("");
+
+      const data = await getUsuarios({
+        page,
+        pageSize,
+        rolId: filtroRolId || undefined,
+        estatus: filtroEstatus || undefined,
+        busqueda: busqueda.trim() || undefined,
+      });
+
+      setUsuarios(data.items || []);
+      setTotal(data.total || 0);
+    } catch (err) {
+      setError(err.message || "Error al cargar usuarios.");
+      setUsuarios([]);
+      setTotal(0);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function handleSearch(e) {
+    e.preventDefault();
+    setPage(1);
+    loadUsuarios();
+  }
+
+  function clearFilters() {
+    setBusqueda("");
+    setFiltroRolId("");
+    setFiltroEstatus("");
+    setPage(1);
+  }
+
+  // Modal handlers
+  function openCreateModal() {
+    setEditingUser(null);
+    setFormData({
+      correo_electronico: "",
+      password: "",
+      rol_id: roles.length > 0 ? String(roles[0].id) : "",
+      nombre_usuario: "",
+      empleado_id: "",
+      requiere_cambio_password: true,
+    });
+    setFormError("");
+    setShowModal(true);
+  }
+
+  function openEditModal(usuario) {
+    setEditingUser(usuario);
+    setFormData({
+      correo_electronico: usuario.correo_electronico || "",
+      password: "",
+      rol_id: String(usuario.rol_id || ""),
+      nombre_usuario: usuario.nombre_usuario || "",
+      empleado_id: usuario.empleado_id ? String(usuario.empleado_id) : "",
+      requiere_cambio_password: usuario.requiere_cambio_password || false,
+      estatus: usuario.estatus || "ACTIVO",
+    });
+    setFormError("");
+    setShowModal(true);
+  }
+
+  function closeModal() {
+    setShowModal(false);
+    setEditingUser(null);
+    setFormError("");
+  }
+
+  function handleFormChange(field, value) {
+    setFormData((prev) => ({ ...prev, [field]: value }));
+  }
+
+  async function handleFormSubmit(e) {
+    e.preventDefault();
+    setFormError("");
+    setFormLoading(true);
+
+    try {
+      if (editingUser) {
+        // Update
+        const updatePayload = {};
+
+        if (formData.correo_electronico !== editingUser.correo_electronico) {
+          updatePayload.correo_electronico = formData.correo_electronico;
+        }
+        if (String(formData.rol_id) !== String(editingUser.rol_id)) {
+          updatePayload.rol_id = Number(formData.rol_id);
+        }
+        if (formData.nombre_usuario !== (editingUser.nombre_usuario || "")) {
+          updatePayload.nombre_usuario = formData.nombre_usuario || null;
+        }
+        if (formData.estatus !== editingUser.estatus) {
+          updatePayload.estatus = formData.estatus;
+        }
+        if (formData.requiere_cambio_password !== editingUser.requiere_cambio_password) {
+          updatePayload.requiere_cambio_password = formData.requiere_cambio_password;
+        }
+        if (formData.password) {
+          updatePayload.nueva_password = formData.password;
+        }
+
+        if (Object.keys(updatePayload).length === 0) {
+          setFormError("No hay cambios para guardar.");
+          setFormLoading(false);
+          return;
+        }
+
+        await actualizarUsuario(editingUser.id, updatePayload);
+      } else {
+        // Create
+        if (!formData.correo_electronico) {
+          setFormError("El correo electrónico es obligatorio.");
+          setFormLoading(false);
+          return;
+        }
+        if (!formData.password || formData.password.length < 8) {
+          setFormError("La contraseña debe tener al menos 8 caracteres.");
+          setFormLoading(false);
+          return;
+        }
+        if (!formData.rol_id) {
+          setFormError("Debes seleccionar un rol.");
+          setFormLoading(false);
+          return;
+        }
+
+        const createPayload = {
+          correo_electronico: formData.correo_electronico,
+          password: formData.password,
+          rol_id: Number(formData.rol_id),
+          requiere_cambio_password: formData.requiere_cambio_password,
+        };
+
+        if (formData.nombre_usuario) {
+          createPayload.nombre_usuario = formData.nombre_usuario;
+        }
+        if (formData.empleado_id) {
+          createPayload.empleado_id = Number(formData.empleado_id);
+        }
+
+        await crearUsuario(createPayload);
+      }
+
+      closeModal();
+      loadUsuarios();
+    } catch (err) {
+      setFormError(err.message || "Error al guardar usuario.");
+    } finally {
+      setFormLoading(false);
+    }
+  }
+
+  async function handleDeactivate(usuario) {
+    if (!window.confirm(`¿Desactivar al usuario "${usuario.nombre_usuario || usuario.correo_electronico}"?`)) {
+      return;
+    }
+
+    try {
+      await desactivarUsuario(usuario.id);
+      loadUsuarios();
+    } catch (err) {
+      alert("Error al desactivar: " + err.message);
+    }
+  }
+
+  // Pagination calculations
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const firstRecord = total === 0 ? 0 : (page - 1) * pageSize + 1;
+  const lastRecord = Math.min(page * pageSize, total);
+
+  // Metrics
+  const activeCount = usuarios.filter((u) => u.estatus === "ACTIVO").length;
+  const blockedCount = usuarios.filter((u) => u.estatus === "BLOQUEADO").length;
 
   return (
     <div className="page-stack">
       <PageHeader
         title="Usuarios del sistema"
-        description="Administración visual de accesos, roles, permisos y perfiles autorizados."
+        description="Gestión de cuentas de acceso, roles y permisos del sistema web."
       >
         <div className="header-actions">
-          <button className="secondary-button" type="button">
-            <Download size={17} />
-            Exportar
-          </button>
-
-          <button className="primary-button" type="button">
+          <button className="primary-button" type="button" onClick={openCreateModal}>
             <Plus size={17} />
             Nuevo usuario
           </button>
         </div>
       </PageHeader>
 
+      {/* Metrics */}
       <section className="metrics-grid four-columns">
         <article className="metric-card">
           <div className="metric-icon">
             <Users size={22} />
           </div>
           <div>
-            <p>Usuarios registrados</p>
-            <strong>{mockSystemUsers.length}</strong>
-            <span>Accesos web configurados</span>
+            <p>Total usuarios</p>
+            <strong>{total}</strong>
+            <span>Registrados en el sistema</span>
           </div>
         </article>
 
@@ -82,8 +319,8 @@ function SystemUsersPage() {
             <ShieldCheck size={22} />
           </div>
           <div>
-            <p>Usuarios activos</p>
-            <strong>{activeUsers}</strong>
+            <p>Activos</p>
+            <strong>{activeCount}</strong>
             <span>Con acceso vigente</span>
           </div>
         </article>
@@ -94,7 +331,7 @@ function SystemUsersPage() {
           </div>
           <div>
             <p>Bloqueados</p>
-            <strong>{blockedUsers}</strong>
+            <strong>{blockedCount}</strong>
             <span>Acceso suspendido</span>
           </div>
         </article>
@@ -104,267 +341,455 @@ function SystemUsersPage() {
             <Shield size={22} />
           </div>
           <div>
-            <p>Roles críticos</p>
-            <strong>{criticalRoles}</strong>
-            <span>Acceso total o sensible</span>
+            <p>Roles disponibles</p>
+            <strong>{roles.length}</strong>
+            <span>Perfiles de autorización</span>
           </div>
         </article>
       </section>
 
+      {/* Table */}
       <section className="panel-card">
         <div className="panel-header">
           <div>
             <h3>Catálogo de usuarios</h3>
-            <p>Usuarios autorizados para entrar al sistema web.</p>
+            <p>Usuarios autorizados para acceder al sistema web.</p>
           </div>
           <UserCog size={22} />
         </div>
 
-        <div className="filters-row">
+        {/* Search + Filters */}
+        <form className="filters-row" onSubmit={handleSearch}>
           <div className="filter-search">
             <Search size={18} />
             <input
               type="text"
-              placeholder="Buscar por usuario, nombre, correo, rol o departamento..."
+              placeholder="Buscar por correo, nombre de usuario o empleado..."
+              value={busqueda}
+              onChange={(e) => setBusqueda(e.target.value)}
             />
           </div>
 
-          <button className="secondary-button" type="button">
+          <button className="secondary-button" type="submit">
+            <Search size={17} />
+            Buscar
+          </button>
+
+          <button
+            className="secondary-button"
+            type="button"
+            onClick={() => setShowFilters((v) => !v)}
+          >
             <SlidersHorizontal size={17} />
             Filtros
           </button>
-        </div>
+        </form>
 
-        <div className="simple-table desktop-table">
-          <table>
-            <thead>
-              <tr>
-                <th>Usuario</th>
-                <th>Nombre</th>
-                <th>Rol</th>
-                <th>Departamento</th>
-                <th>Estatus</th>
-                <th>2FA</th>
-                <th>Último acceso</th>
-              </tr>
-            </thead>
+        {showFilters && (
+          <div className="advanced-filters">
+            <div className="filter-field">
+              <label htmlFor="filter-rol">Rol</label>
+              <select
+                id="filter-rol"
+                value={filtroRolId}
+                onChange={(e) => {
+                  setFiltroRolId(e.target.value);
+                  setPage(1);
+                }}
+              >
+                <option value="">Todos los roles</option>
+                {roles.map((rol) => (
+                  <option key={rol.id} value={rol.id}>
+                    {rol.nombre}
+                  </option>
+                ))}
+              </select>
+            </div>
 
-            <tbody>
-              {mockSystemUsers.map((user) => (
-                <tr key={user.id}>
-                  <td>
-                    <strong>{user.username}</strong>
-                    <span className="table-subtext">{user.email}</span>
-                  </td>
+            <div className="filter-field">
+              <label htmlFor="filter-estatus">Estatus</label>
+              <select
+                id="filter-estatus"
+                value={filtroEstatus}
+                onChange={(e) => {
+                  setFiltroEstatus(e.target.value);
+                  setPage(1);
+                }}
+              >
+                <option value="">Todos</option>
+                <option value="ACTIVO">Activo</option>
+                <option value="INACTIVO">Inactivo</option>
+                <option value="BLOQUEADO">Bloqueado</option>
+              </select>
+            </div>
 
-                  <td>
-                    <div className="employee-cell">
-                      <div className="employee-avatar">
-                        {user.fullName.charAt(0)}
-                      </div>
-                      <div>
-                        <strong>{user.fullName}</strong>
-                        <span>{user.employeeCode}</span>
-                      </div>
-                    </div>
-                  </td>
+            <div className="filter-actions">
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={clearFilters}
+              >
+                <X size={17} />
+                Limpiar
+              </button>
+            </div>
+          </div>
+        )}
 
-                  <td>
-                    <span className={getRoleClass(user.role)}>{user.role}</span>
-                  </td>
+        {/* Error */}
+        {error && (
+          <div className="empty-state">
+            <h3>Error al cargar usuarios</h3>
+            <p>{error}</p>
+          </div>
+        )}
 
-                  <td>{user.department}</td>
+        {/* Loading */}
+        {loading && (
+          <div className="empty-state">
+            <h3>Cargando usuarios...</h3>
+            <p>Consultando información del sistema.</p>
+          </div>
+        )}
 
-                  <td>
-                    <span className={getStatusClass(user.status)}>
-                      {user.status}
-                    </span>
-                  </td>
+        {/* Empty */}
+        {!loading && !error && usuarios.length === 0 && (
+          <div className="empty-state">
+            <h3>No se encontraron usuarios</h3>
+            <p>No existen usuarios que coincidan con los criterios.</p>
+          </div>
+        )}
 
-                  <td>
-                    <span className={getStatusClass(user.twoFactor)}>
-                      {user.twoFactor}
-                    </span>
-                  </td>
+        {/* Table */}
+        {!loading && usuarios.length > 0 && (
+          <>
+            <div className="simple-table">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Usuario</th>
+                    <th>Empleado</th>
+                    <th>Rol</th>
+                    <th>Estatus</th>
+                    <th>Último login</th>
+                    <th>Acciones</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {usuarios.map((usuario) => (
+                    <tr key={usuario.id}>
+                      <td>
+                        <div className="employee-cell">
+                          <div className="employee-avatar">
+                            {(usuario.nombre_usuario || usuario.correo_electronico || "U").charAt(0).toUpperCase()}
+                          </div>
+                          <div>
+                            <strong>{usuario.nombre_usuario || "Sin nombre de usuario"}</strong>
+                            <span>{usuario.correo_electronico}</span>
+                          </div>
+                        </div>
+                      </td>
 
-                  <td>{user.lastLogin}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+                      <td>
+                        {usuario.nombre_empleado ? (
+                          <div>
+                            <strong>{usuario.nombre_empleado}</strong>
+                            <span className="table-subtext">{usuario.codigo_empleado}</span>
+                          </div>
+                        ) : (
+                          <span className="muted-table-text">Sin empleado vinculado</span>
+                        )}
+                      </td>
 
-        <div className="mobile-card-list">
-          {mockSystemUsers.map((user) => (
-            <article className="mobile-data-card" key={`${user.id}-mobile`}>
-              <h4>{user.fullName}</h4>
-              <p>{user.email}</p>
+                      <td>
+                        <span className={getRoleClass(usuario.rol_codigo)}>
+                          {usuario.rol_nombre}
+                        </span>
+                      </td>
 
-              <div className="mobile-data-grid">
-                <div>
-                  <span>Usuario</span>
-                  <strong>{user.username}</strong>
-                </div>
-                <div>
-                  <span>Rol</span>
-                  <strong>{user.role}</strong>
-                </div>
-                <div>
-                  <span>Departamento</span>
-                  <strong>{user.department}</strong>
-                </div>
-                <div>
-                  <span>Estatus</span>
-                  <strong>{user.status}</strong>
-                </div>
-                <div>
-                  <span>2FA</span>
-                  <strong>{user.twoFactor}</strong>
-                </div>
-                <div>
-                  <span>Último acceso</span>
-                  <strong>{user.lastLogin}</strong>
-                </div>
+                      <td>
+                        <span className={getStatusClass(usuario.estatus)}>
+                          {getStatusLabel(usuario.estatus)}
+                        </span>
+                      </td>
+
+                      <td>
+                        {usuario.ultimo_login
+                          ? new Date(usuario.ultimo_login).toLocaleString("es-MX", {
+                              day: "2-digit",
+                              month: "short",
+                              year: "numeric",
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })
+                          : "Nunca"}
+                      </td>
+
+                      <td>
+                        <div className="table-actions-group">
+                          <button
+                            className="table-action"
+                            type="button"
+                            onClick={() => openEditModal(usuario)}
+                            title="Editar usuario"
+                          >
+                            <Edit size={16} />
+                          </button>
+
+                          {usuario.estatus === "ACTIVO" && (
+                            <button
+                              className="table-action danger"
+                              type="button"
+                              onClick={() => handleDeactivate(usuario)}
+                              title="Desactivar usuario"
+                            >
+                              <XCircle size={16} />
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Pagination */}
+            <div className="pagination-bar">
+              <div className="pagination-summary">
+                Mostrando <strong>{firstRecord}</strong> – <strong>{lastRecord}</strong> de{" "}
+                <strong>{total}</strong> usuarios
               </div>
-            </article>
-          ))}
-        </div>
+
+              <div className="pagination-size">
+                <label htmlFor="users-per-page">Filas por página</label>
+                <select
+                  id="users-per-page"
+                  value={pageSize}
+                  onChange={(e) => {
+                    setPageSize(Number(e.target.value));
+                    setPage(1);
+                  }}
+                >
+                  <option value={5}>5</option>
+                  <option value={10}>10</option>
+                  <option value={20}>20</option>
+                  <option value={50}>50</option>
+                </select>
+              </div>
+
+              <div className="pagination-controls" aria-label="Paginación de usuarios">
+                <button
+                  className="pagination-button"
+                  type="button"
+                  disabled={page === 1}
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  aria-label="Página anterior"
+                >
+                  <ChevronLeft size={17} />
+                </button>
+
+                {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                  let startPage = Math.max(1, page - 2);
+                  if (startPage + 4 > totalPages) startPage = Math.max(1, totalPages - 4);
+                  const pageNum = startPage + i;
+                  if (pageNum > totalPages) return null;
+                  return (
+                    <button
+                      key={pageNum}
+                      className={pageNum === page ? "pagination-button active" : "pagination-button"}
+                      type="button"
+                      onClick={() => setPage(pageNum)}
+                    >
+                      {pageNum}
+                    </button>
+                  );
+                })}
+
+                <button
+                  className="pagination-button"
+                  type="button"
+                  disabled={page === totalPages}
+                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  aria-label="Página siguiente"
+                >
+                  <ChevronRight size={17} />
+                </button>
+              </div>
+            </div>
+          </>
+        )}
       </section>
 
-      <section className="users-grid">
-        <article className="panel-card">
+      {/* Roles panel */}
+      {roles.length > 0 && (
+        <section className="panel-card">
           <div className="panel-header">
             <div>
               <h3>Roles del sistema</h3>
-              <p>Perfiles de autorización configurados para el sistema.</p>
-            </div>
-            <Shield size={22} />
-          </div>
-
-          <div className="role-list">
-            {mockRoles.map((role) => (
-              <article className="role-card" key={role.id}>
-                <div>
-                  <h4>{role.role}</h4>
-                  <p>{role.description}</p>
-                </div>
-
-                <div className="role-card-footer">
-                  <span className={getRoleClass(role.role)}>{role.level}</span>
-                  <strong>{role.users} usuario(s)</strong>
-                </div>
-              </article>
-            ))}
-          </div>
-        </article>
-
-        <article className="panel-card">
-          <div className="panel-header">
-            <div>
-              <h3>Permisos sensibles</h3>
-              <p>Resumen de operaciones restringidas al Super Admin.</p>
+              <p>Perfiles de autorización configurados.</p>
             </div>
             <KeyRound size={22} />
           </div>
 
-          <div className="sensitive-permission-list">
-            <div>
-              <span>Configurar dispositivos ZKTeco</span>
-              <strong>Solo Super Admin</strong>
-            </div>
-
-            <div>
-              <span>Gestionar usuarios del sistema</span>
-              <strong>Solo Super Admin</strong>
-            </div>
-
-            <div>
-              <span>Ver bitácora de auditoría</span>
-              <strong>Super Admin / Auditor</strong>
-            </div>
-
-            <div>
-              <span>Editar reglas globales</span>
-              <strong>Super Admin / RH autorizado</strong>
-            </div>
-
-            <div>
-              <span>Eliminar registros crudos</span>
-              <strong>No permitido</strong>
-            </div>
+          <div className="role-list">
+            {roles.map((rol) => (
+              <article className="role-card" key={rol.id}>
+                <div>
+                  <h4>{rol.nombre}</h4>
+                  <p>{rol.descripcion || "Sin descripción"}</p>
+                </div>
+                <div className="role-card-footer">
+                  <span className={getRoleClass(rol.codigo)}>{rol.codigo}</span>
+                  {rol.es_sistema && <span className="badge neutral">Sistema</span>}
+                </div>
+              </article>
+            ))}
           </div>
-        </article>
-      </section>
+        </section>
+      )}
 
-      <section className="panel-card">
-        <div className="panel-header">
-          <div>
-            <h3>Matriz de permisos</h3>
-            <p>Visualización base de acceso por rol y módulo del sistema.</p>
-          </div>
-        </div>
+      {/* Create/Edit Modal */}
+      {showModal && (
+        <div className="modal-overlay" onClick={closeModal}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>{editingUser ? "Editar usuario" : "Nuevo usuario"}</h3>
+              <button className="modal-close" type="button" onClick={closeModal}>
+                <X size={20} />
+              </button>
+            </div>
 
-        <div className="simple-table desktop-table">
-          <table>
-            <thead>
-              <tr>
-                <th>Módulo</th>
-                <th>Super Admin</th>
-                <th>RH/Admin</th>
-                <th>Supervisor</th>
-                <th>Empleado</th>
-                <th>Auditor</th>
-              </tr>
-            </thead>
+            <form className="modal-body" onSubmit={handleFormSubmit}>
+              {formError && (
+                <div className="form-error-message">
+                  {formError}
+                </div>
+              )}
 
-            <tbody>
-              {mockPermissionMatrix.map((row) => (
-                <tr key={row.module}>
-                  <td>
-                    <strong>{row.module}</strong>
-                  </td>
-                  <td>{renderPermission(row.superAdmin)}</td>
-                  <td>{renderPermission(row.rhAdmin)}</td>
-                  <td>{renderPermission(row.supervisor)}</td>
-                  <td>{renderPermission(row.employee)}</td>
-                  <td>{renderPermission(row.auditor)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-
-        <div className="mobile-card-list">
-          {mockPermissionMatrix.map((row) => (
-            <article className="mobile-data-card" key={`${row.module}-mobile`}>
-              <h4>{row.module}</h4>
-
-              <div className="mobile-data-grid">
-                <div>
-                  <span>Super Admin</span>
-                  <strong>{String(row.superAdmin)}</strong>
-                </div>
-                <div>
-                  <span>RH/Admin</span>
-                  <strong>{String(row.rhAdmin)}</strong>
-                </div>
-                <div>
-                  <span>Supervisor</span>
-                  <strong>{String(row.supervisor)}</strong>
-                </div>
-                <div>
-                  <span>Empleado</span>
-                  <strong>{String(row.employee)}</strong>
-                </div>
-                <div>
-                  <span>Auditor</span>
-                  <strong>{String(row.auditor)}</strong>
-                </div>
+              <div className="form-field">
+                <label htmlFor="user-email">Correo electrónico *</label>
+                <input
+                  id="user-email"
+                  type="email"
+                  required
+                  placeholder="usuario@dominio.com"
+                  value={formData.correo_electronico}
+                  onChange={(e) => handleFormChange("correo_electronico", e.target.value)}
+                />
               </div>
-            </article>
-          ))}
+
+              <div className="form-field">
+                <label htmlFor="user-password">
+                  {editingUser ? "Nueva contraseña (dejar vacío para no cambiar)" : "Contraseña *"}
+                </label>
+                <input
+                  id="user-password"
+                  type="password"
+                  placeholder={editingUser ? "Sin cambios" : "Mínimo 8 caracteres"}
+                  required={!editingUser}
+                  minLength={editingUser ? 0 : 8}
+                  value={formData.password}
+                  onChange={(e) => handleFormChange("password", e.target.value)}
+                />
+              </div>
+
+              <div className="form-field">
+                <label htmlFor="user-role">Rol *</label>
+                <select
+                  id="user-role"
+                  required
+                  value={formData.rol_id}
+                  onChange={(e) => handleFormChange("rol_id", e.target.value)}
+                >
+                  <option value="">Seleccionar rol...</option>
+                  {roles.map((rol) => (
+                    <option key={rol.id} value={rol.id}>
+                      {rol.nombre} ({rol.codigo})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="form-field">
+                <label htmlFor="user-username">Nombre de usuario</label>
+                <input
+                  id="user-username"
+                  type="text"
+                  placeholder="Se genera del correo si se deja vacío"
+                  value={formData.nombre_usuario}
+                  onChange={(e) => handleFormChange("nombre_usuario", e.target.value)}
+                />
+              </div>
+
+              {!editingUser && (
+                <div className="form-field">
+                  <label htmlFor="user-empleado">ID de empleado (opcional)</label>
+                  <input
+                    id="user-empleado"
+                    type="number"
+                    placeholder="Vincular a empleado existente"
+                    value={formData.empleado_id}
+                    onChange={(e) => handleFormChange("empleado_id", e.target.value)}
+                  />
+                </div>
+              )}
+
+              {editingUser && (
+                <div className="form-field">
+                  <label htmlFor="user-estatus">Estatus</label>
+                  <select
+                    id="user-estatus"
+                    value={formData.estatus}
+                    onChange={(e) => handleFormChange("estatus", e.target.value)}
+                  >
+                    <option value="ACTIVO">Activo</option>
+                    <option value="INACTIVO">Inactivo</option>
+                    <option value="BLOQUEADO">Bloqueado</option>
+                  </select>
+                </div>
+              )}
+
+              <div className="form-field form-checkbox">
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={formData.requiere_cambio_password}
+                    onChange={(e) => handleFormChange("requiere_cambio_password", e.target.checked)}
+                  />
+                  Requerir cambio de contraseña al primer login
+                </label>
+              </div>
+
+              <div className="modal-footer">
+                <button
+                  className="secondary-button"
+                  type="button"
+                  onClick={closeModal}
+                  disabled={formLoading}
+                >
+                  Cancelar
+                </button>
+
+                <button
+                  className="primary-button"
+                  type="submit"
+                  disabled={formLoading}
+                >
+                  {formLoading ? (
+                    "Guardando..."
+                  ) : (
+                    <>
+                      <Check size={17} />
+                      {editingUser ? "Guardar cambios" : "Crear usuario"}
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
-      </section>
+      )}
     </div>
   );
 }

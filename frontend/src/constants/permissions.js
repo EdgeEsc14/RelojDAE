@@ -1,107 +1,169 @@
 import { ROLES } from "./roles";
 
 /**
- * Niveles de acceso.
+ * DataScope — Alcance de datos.
+ *
+ * Define QUÉ DATOS puede ver el usuario dentro de un módulo.
+ * Estos valores corresponden exactamente a los reconocidos por
+ * el backend en seguridad.permisos_rol.alcance_datos.
  */
-export const ACCESS_LEVELS = Object.freeze({
-  TOTAL: "total",
-  AREA: "area",
-  PROPIO: "propio",
-  LECTURA: "lectura",
-  NINGUNO: "ninguno",
+export const DATA_SCOPES = Object.freeze({
+  TOTAL: "TOTAL",
+  AREA: "AREA",
+  PROPIO: "PROPIO",
+  NINGUNO: "NINGUNO",
 });
+
+/**
+ * Mantener ACCESS_LEVELS como alias de DATA_SCOPES para
+ * compatibilidad temporal con componentes que aún lo usen.
+ *
+ * @deprecated Usar DATA_SCOPES directamente.
+ */
+export const ACCESS_LEVELS = DATA_SCOPES;
 
 /**
  * Identificadores oficiales de los módulos.
  *
- * Estos nombres se utilizarán tanto en la matriz de permisos
- * como en el menú lateral.
+ * Estos códigos deben corresponder con seguridad.modulos.codigo
+ * en PostgreSQL. Cuando un módulo frontend no tiene equivalente
+ * exacto en la DB, se documenta el mapeo.
+ *
+ * Mapeos:
+ *   USUARIOS_SISTEMA → backend usa código "SEGURIDAD"
  */
 export const MODULES = Object.freeze({
-  DASHBOARD: "dashboard",
-  EMPLEADOS: "empleados",
-  ASISTENCIA: "asistencia",
-  CHECADAS_CRUDAS: "checadas_crudas",
-  INCIDENCIAS: "incidencias",
-  REPORTES: "reportes",
-  DISPOSITIVOS: "dispositivos",
-  HORARIOS: "horarios",
-  USUARIOS_SISTEMA: "usuarios_sistema",
-  AUDITORIA: "auditoria",
-  CONFIGURACION: "configuracion",
+  DASHBOARD: "DASHBOARD",
+  EMPLEADOS: "EMPLEADOS",
+  ASISTENCIA: "ASISTENCIA",
+  CHECADAS_CRUDAS: "CHECADAS_CRUDAS",
+  INCIDENCIAS: "INCIDENCIAS",
+  REPORTES: "REPORTES",
+  DISPOSITIVOS: "DISPOSITIVOS",
+  HORARIOS: "HORARIOS",
+  USUARIOS_SISTEMA: "SEGURIDAD",
+  AUDITORIA: "AUDITORIA",
+  CONFIGURACION: "CONFIGURACION",
 });
 
 /**
- * Matriz de permisos por rol.
+ * Estructura de permisos por módulo.
+ *
+ * Cada entrada define:
+ *   dataScope  — alcance de datos (TOTAL/AREA/PROPIO/NINGUNO)
+ *   canRead    — puede consultar
+ *   canCreate  — puede crear
+ *   canEdit    — puede editar
+ *   canDelete  — puede eliminar
+ *   canApprove — puede aprobar
+ *   canExport  — puede exportar
+ *
+ * Esta matriz refleja el seed de la migración 016 + 062.
+ * La fuente de verdad es PostgreSQL; esta copia local se usa
+ * únicamente para decisiones de UI (menú, botones, navegación).
  */
+
+function perm(
+  dataScope,
+  {
+    canRead = false,
+    canCreate = false,
+    canEdit = false,
+    canDelete = false,
+    canApprove = false,
+    canExport = false,
+  } = {},
+) {
+  return Object.freeze({
+    dataScope,
+    canRead,
+    canCreate,
+    canEdit,
+    canDelete,
+    canApprove,
+    canExport,
+  });
+}
+
+const TOTAL_ALL = perm(DATA_SCOPES.TOTAL, {
+  canRead: true,
+  canCreate: true,
+  canEdit: true,
+  canDelete: true,
+  canApprove: true,
+  canExport: true,
+});
+
+const NINGUNO = perm(DATA_SCOPES.NINGUNO);
+
 export const ROLE_PERMISSIONS = Object.freeze({
   [ROLES.SUPER_ADMIN]: {
-    [MODULES.DASHBOARD]: ACCESS_LEVELS.TOTAL,
-    [MODULES.EMPLEADOS]: ACCESS_LEVELS.TOTAL,
-    [MODULES.ASISTENCIA]: ACCESS_LEVELS.TOTAL,
-    [MODULES.CHECADAS_CRUDAS]: ACCESS_LEVELS.TOTAL,
-    [MODULES.INCIDENCIAS]: ACCESS_LEVELS.TOTAL,
-    [MODULES.REPORTES]: ACCESS_LEVELS.TOTAL,
-    [MODULES.DISPOSITIVOS]: ACCESS_LEVELS.TOTAL,
-    [MODULES.HORARIOS]: ACCESS_LEVELS.TOTAL,
-    [MODULES.USUARIOS_SISTEMA]: ACCESS_LEVELS.TOTAL,
-    [MODULES.AUDITORIA]: ACCESS_LEVELS.TOTAL,
-    [MODULES.CONFIGURACION]: ACCESS_LEVELS.TOTAL,
+    [MODULES.DASHBOARD]: TOTAL_ALL,
+    [MODULES.EMPLEADOS]: TOTAL_ALL,
+    [MODULES.ASISTENCIA]: TOTAL_ALL,
+    [MODULES.CHECADAS_CRUDAS]: TOTAL_ALL,
+    [MODULES.INCIDENCIAS]: TOTAL_ALL,
+    [MODULES.REPORTES]: TOTAL_ALL,
+    [MODULES.DISPOSITIVOS]: TOTAL_ALL,
+    [MODULES.HORARIOS]: TOTAL_ALL,
+    [MODULES.USUARIOS_SISTEMA]: TOTAL_ALL,
+    [MODULES.AUDITORIA]: TOTAL_ALL,
+    [MODULES.CONFIGURACION]: TOTAL_ALL,
   },
 
   [ROLES.RH_ADMIN]: {
-    [MODULES.DASHBOARD]: ACCESS_LEVELS.TOTAL,
-    [MODULES.EMPLEADOS]: ACCESS_LEVELS.TOTAL,
-    [MODULES.ASISTENCIA]: ACCESS_LEVELS.TOTAL,
-    [MODULES.CHECADAS_CRUDAS]: ACCESS_LEVELS.TOTAL,
-    [MODULES.INCIDENCIAS]: ACCESS_LEVELS.TOTAL,
-    [MODULES.REPORTES]: ACCESS_LEVELS.TOTAL,
-    [MODULES.DISPOSITIVOS]: ACCESS_LEVELS.NINGUNO,
-    [MODULES.HORARIOS]: ACCESS_LEVELS.TOTAL,
-    [MODULES.USUARIOS_SISTEMA]: ACCESS_LEVELS.NINGUNO,
-    [MODULES.AUDITORIA]: ACCESS_LEVELS.NINGUNO,
-    [MODULES.CONFIGURACION]: ACCESS_LEVELS.NINGUNO,
+    [MODULES.DASHBOARD]: perm(DATA_SCOPES.TOTAL, { canRead: true, canExport: true }),
+    [MODULES.EMPLEADOS]: perm(DATA_SCOPES.TOTAL, { canRead: true, canCreate: true, canEdit: true, canExport: true }),
+    [MODULES.ASISTENCIA]: perm(DATA_SCOPES.TOTAL, { canRead: true, canCreate: true, canEdit: true, canApprove: true, canExport: true }),
+    [MODULES.CHECADAS_CRUDAS]: perm(DATA_SCOPES.TOTAL, { canRead: true, canCreate: true, canEdit: true, canExport: true }),
+    [MODULES.INCIDENCIAS]: perm(DATA_SCOPES.TOTAL, { canRead: true, canCreate: true, canEdit: true, canApprove: true, canExport: true }),
+    [MODULES.REPORTES]: perm(DATA_SCOPES.TOTAL, { canRead: true, canExport: true }),
+    [MODULES.DISPOSITIVOS]: perm(DATA_SCOPES.TOTAL, { canRead: true }),
+    [MODULES.HORARIOS]: perm(DATA_SCOPES.TOTAL, { canRead: true, canCreate: true, canEdit: true, canExport: true }),
+    [MODULES.USUARIOS_SISTEMA]: NINGUNO,
+    [MODULES.AUDITORIA]: NINGUNO,
+    [MODULES.CONFIGURACION]: perm(DATA_SCOPES.TOTAL, { canRead: true }),
   },
 
   [ROLES.SUPERVISOR]: {
-    [MODULES.DASHBOARD]: ACCESS_LEVELS.TOTAL,
-    [MODULES.EMPLEADOS]: ACCESS_LEVELS.AREA,
-    [MODULES.ASISTENCIA]: ACCESS_LEVELS.AREA,
-    [MODULES.CHECADAS_CRUDAS]: ACCESS_LEVELS.NINGUNO,
-    [MODULES.INCIDENCIAS]: ACCESS_LEVELS.AREA,
-    [MODULES.REPORTES]: ACCESS_LEVELS.AREA,
-    [MODULES.DISPOSITIVOS]: ACCESS_LEVELS.NINGUNO,
-    [MODULES.HORARIOS]: ACCESS_LEVELS.NINGUNO,
-    [MODULES.USUARIOS_SISTEMA]: ACCESS_LEVELS.NINGUNO,
-    [MODULES.AUDITORIA]: ACCESS_LEVELS.NINGUNO,
-    [MODULES.CONFIGURACION]: ACCESS_LEVELS.NINGUNO,
+    [MODULES.DASHBOARD]: perm(DATA_SCOPES.AREA, { canRead: true, canExport: true }),
+    [MODULES.EMPLEADOS]: perm(DATA_SCOPES.AREA, { canRead: true, canExport: true }),
+    [MODULES.ASISTENCIA]: perm(DATA_SCOPES.AREA, { canRead: true, canExport: true }),
+    [MODULES.CHECADAS_CRUDAS]: NINGUNO,
+    [MODULES.INCIDENCIAS]: perm(DATA_SCOPES.AREA, { canRead: true, canExport: true }),
+    [MODULES.REPORTES]: perm(DATA_SCOPES.AREA, { canRead: true, canExport: true }),
+    [MODULES.DISPOSITIVOS]: NINGUNO,
+    [MODULES.HORARIOS]: NINGUNO,
+    [MODULES.USUARIOS_SISTEMA]: NINGUNO,
+    [MODULES.AUDITORIA]: NINGUNO,
+    [MODULES.CONFIGURACION]: NINGUNO,
   },
 
   [ROLES.EMPLEADO]: {
-    [MODULES.DASHBOARD]: ACCESS_LEVELS.NINGUNO,
-    [MODULES.EMPLEADOS]: ACCESS_LEVELS.NINGUNO,
-    [MODULES.ASISTENCIA]: ACCESS_LEVELS.PROPIO,
-    [MODULES.CHECADAS_CRUDAS]: ACCESS_LEVELS.NINGUNO,
-    [MODULES.INCIDENCIAS]: ACCESS_LEVELS.PROPIO,
-    [MODULES.REPORTES]: ACCESS_LEVELS.PROPIO,
-    [MODULES.DISPOSITIVOS]: ACCESS_LEVELS.NINGUNO,
-    [MODULES.HORARIOS]: ACCESS_LEVELS.NINGUNO,
-    [MODULES.USUARIOS_SISTEMA]: ACCESS_LEVELS.NINGUNO,
-    [MODULES.AUDITORIA]: ACCESS_LEVELS.NINGUNO,
-    [MODULES.CONFIGURACION]: ACCESS_LEVELS.NINGUNO,
+    [MODULES.DASHBOARD]: perm(DATA_SCOPES.PROPIO, { canRead: true }),
+    [MODULES.EMPLEADOS]: perm(DATA_SCOPES.PROPIO, { canRead: true }),
+    [MODULES.ASISTENCIA]: perm(DATA_SCOPES.PROPIO, { canRead: true }),
+    [MODULES.CHECADAS_CRUDAS]: NINGUNO,
+    [MODULES.INCIDENCIAS]: perm(DATA_SCOPES.PROPIO, { canRead: true }),
+    [MODULES.REPORTES]: perm(DATA_SCOPES.PROPIO, { canRead: true, canExport: true }),
+    [MODULES.DISPOSITIVOS]: NINGUNO,
+    [MODULES.HORARIOS]: NINGUNO,
+    [MODULES.USUARIOS_SISTEMA]: NINGUNO,
+    [MODULES.AUDITORIA]: NINGUNO,
+    [MODULES.CONFIGURACION]: NINGUNO,
   },
 
   [ROLES.AUDITOR]: {
-    [MODULES.DASHBOARD]: ACCESS_LEVELS.LECTURA,
-    [MODULES.EMPLEADOS]: ACCESS_LEVELS.LECTURA,
-    [MODULES.ASISTENCIA]: ACCESS_LEVELS.LECTURA,
-    [MODULES.CHECADAS_CRUDAS]: ACCESS_LEVELS.LECTURA,
-    [MODULES.INCIDENCIAS]: ACCESS_LEVELS.LECTURA,
-    [MODULES.REPORTES]: ACCESS_LEVELS.LECTURA,
-    [MODULES.DISPOSITIVOS]: ACCESS_LEVELS.NINGUNO,
-    [MODULES.HORARIOS]: ACCESS_LEVELS.LECTURA,
-    [MODULES.USUARIOS_SISTEMA]: ACCESS_LEVELS.NINGUNO,
-    [MODULES.AUDITORIA]: ACCESS_LEVELS.LECTURA,
-    [MODULES.CONFIGURACION]: ACCESS_LEVELS.NINGUNO,
+    [MODULES.DASHBOARD]: perm(DATA_SCOPES.TOTAL, { canRead: true, canExport: true }),
+    [MODULES.EMPLEADOS]: perm(DATA_SCOPES.TOTAL, { canRead: true, canExport: true }),
+    [MODULES.ASISTENCIA]: perm(DATA_SCOPES.TOTAL, { canRead: true, canExport: true }),
+    [MODULES.CHECADAS_CRUDAS]: perm(DATA_SCOPES.TOTAL, { canRead: true, canExport: true }),
+    [MODULES.INCIDENCIAS]: perm(DATA_SCOPES.TOTAL, { canRead: true, canExport: true }),
+    [MODULES.REPORTES]: perm(DATA_SCOPES.TOTAL, { canRead: true, canExport: true }),
+    [MODULES.DISPOSITIVOS]: perm(DATA_SCOPES.TOTAL, { canRead: true }),
+    [MODULES.HORARIOS]: perm(DATA_SCOPES.TOTAL, { canRead: true, canExport: true }),
+    [MODULES.USUARIOS_SISTEMA]: perm(DATA_SCOPES.TOTAL, { canRead: true }),
+    [MODULES.AUDITORIA]: perm(DATA_SCOPES.TOTAL, { canRead: true, canExport: true }),
+    [MODULES.CONFIGURACION]: perm(DATA_SCOPES.TOTAL, { canRead: true }),
   },
 });

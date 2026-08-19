@@ -8,9 +8,12 @@ import AppLayout from "../components/layout/AppLayout";
 import ProtectedRoute from "./ProtectedRoute";
 
 import {
-  ACCESS_LEVELS,
+  DATA_SCOPES,
   MODULES,
 } from "../constants/permissions";
+
+// Alias para compatibilidad con prop allowedAccessLevels
+const ACCESS_LEVELS = DATA_SCOPES;
 
 import LoginPage from "../pages/auth/LoginPage";
 import DashboardPage from "../pages/dashboard/DashboardPage";
@@ -18,6 +21,7 @@ import DashboardPage from "../pages/dashboard/DashboardPage";
 import EmployeesPage from "../pages/employees/EmployeesPage";
 import EmployeeDetailPage from "../pages/employees/EmployeeDetailPage";
 import NewEmployeePage from "../pages/employees/NewEmployeePage";
+import EmployeeLinkingPage from "../pages/employees/EmployeeLinkingPage";
 
 import AttendancePage from "../pages/attendance/AttendancePage";
 import AttendanceRawPage from "../pages/attendance/AttendanceRawPage";
@@ -34,7 +38,7 @@ import DeviceDetailPage from "../pages/devices/DeviceDetailPage";
 
 import SchedulesPage from "../pages/schedules/SchedulesPage";
 
-import SystemUsersPage from "../pages/users/SystemUsersPage";
+import CalendarPage from "../pages/calendar/CalendarPage";
 
 import AuditPage from "../pages/audit/AuditPage";
 
@@ -98,6 +102,20 @@ function AppRoutes() {
               ]}
             >
               <NewEmployeePage />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/employees/linking"
+          element={
+            <ProtectedRoute
+              requiredModule={MODULES.EMPLEADOS}
+              allowedAccessLevels={[
+                ACCESS_LEVELS.TOTAL,
+              ]}
+            >
+              <EmployeeLinkingPage />
             </ProtectedRoute>
           }
         />
@@ -210,7 +228,6 @@ function AppRoutes() {
               allowedAccessLevels={[
                 ACCESS_LEVELS.TOTAL,
                 ACCESS_LEVELS.AREA,
-                ACCESS_LEVELS.LECTURA,
               ]}
             >
               <DepartmentReportPage />
@@ -253,14 +270,14 @@ function AppRoutes() {
           }
         />
 
-        {/* Usuarios del sistema */}
+        {/* Calendario Laboral */}
         <Route
-          path="/users"
+          path="/calendar"
           element={
             <ProtectedRoute
-              requiredModule={MODULES.USUARIOS_SISTEMA}
+              requiredModule={MODULES.HORARIOS}
             >
-              <SystemUsersPage />
+              <CalendarPage />
             </ProtectedRoute>
           }
         />

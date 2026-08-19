@@ -1,20 +1,22 @@
 import { Navigate, useLocation } from "react-router-dom";
 
-import { ACCESS_LEVELS } from "../constants/permissions";
+import { DATA_SCOPES } from "../constants/permissions";
 import { useAuth } from "../context/AuthContext";
-import { getModuleAccess } from "../utils/permissions";
+import { getModulePermissions } from "../utils/permissions";
 
 /**
  * Protege una ruta según:
  *
  * 1. Si hay sesión real.
  * 2. El rol del usuario autenticado.
- * 3. El módulo solicitado.
- * 4. Opcionalmente, los niveles de acceso permitidos.
+ * 3. El módulo solicitado (dataScope !== NINGUNO).
+ * 4. Opcionalmente, los DataScopes permitidos para esta ruta.
+ * 5. Opcionalmente, capacidades requeridas.
  */
 function ProtectedRoute({
   requiredModule,
   allowedAccessLevels,
+  requiredCapability,
   children,
 }) {
   const location = useLocation();
@@ -38,19 +40,27 @@ function ProtectedRoute({
     );
   }
 
-  const accessLevel = getModuleAccess(
+  const permissions = getModulePermissions(
     user.role,
     requiredModule,
   );
 
+  // El módulo no es accesible si dataScope es NINGUNO
   const hasModuleAccess =
-    accessLevel !== ACCESS_LEVELS.NINGUNO;
+    permissions.dataScope !== DATA_SCOPES.NINGUNO;
 
-  const hasAllowedAccessLevel =
+  // Filtro opcional por DataScope (para rutas que requieren
+  // un nivel específico, ej. solo TOTAL puede procesar asistencia)
+  const hasAllowedScope =
     !allowedAccessLevels ||
-    allowedAccessLevels.includes(accessLevel);
+    allowedAccessLevels.includes(permissions.dataScope);
 
-  if (!hasModuleAccess || !hasAllowedAccessLevel) {
+  // Filtro opcional por capacidad específica
+  const hasRequiredCapability =
+    !requiredCapability ||
+    permissions[requiredCapability] === true;
+
+  if (!hasModuleAccess || !hasAllowedScope || !hasRequiredCapability) {
     return <Navigate to="/access-denied" replace />;
   }
 

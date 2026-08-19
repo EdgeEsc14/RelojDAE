@@ -17,6 +17,8 @@ backend/.venv/
 # FastAPI / Python env
 .env
 .env.*
+!.env.example
+!backend/.env.example
 *.pem
 *.key
 

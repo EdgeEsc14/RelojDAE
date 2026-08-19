@@ -9,6 +9,7 @@ from app.repositories.catalogos_repo import (
     listar_horarios,
     listar_puestos,
     listar_roles,
+    listar_tipos_contratacion,
     listar_tipos_incidencia,
     listar_tipos_marcacion,
     listar_tipos_turno,
@@ -20,6 +21,7 @@ from app.schemas.catalogos import (
     DispositivoCatalogoItem,
     HorarioCatalogoItem,
     PuestoCatalogoItem,
+    TipoContratacionCatalogoItem,
     RolCatalogoItem,
     TipoIncidenciaCatalogoItem,
     TipoMarcacionCatalogoItem,
@@ -36,7 +38,33 @@ router = APIRouter(
     ],
 )
 
+@router.get(
+    "/tipos-contratacion",
+)
+def get_tipos_contratacion(
+    db: Annotated[
+        Session,
+        Depends(get_db),
+    ],
+    q: Annotated[
+        str | None,
+        Query(
+            description="Buscar por código o nombre"
+        ),
+    ] = None,
+    activo: Annotated[
+        bool | None,
+        Query(
+            description="Filtrar por activo/inactivo"
+        ),
+    ] = True,
+) -> list[dict]:
 
+    return listar_tipos_contratacion(
+        db=db,
+        q=q,
+        activo=activo,
+    )
 @router.get("/todos", response_model=CatalogosTodosResponse)
 def get_todos_catalogos(
     db: Annotated[Session, Depends(get_db)],
@@ -74,7 +102,33 @@ def get_puestos(
         q=q,
         activo=activo,
     )
-
+@router.get(
+    "/tipos-contratacion",
+    response_model=list[TipoContratacionCatalogoItem],
+)
+def get_tipos_contratacion(
+    db: Annotated[
+        Session,
+        Depends(get_db),
+    ],
+    q: Annotated[
+        str | None,
+        Query(
+            description="Buscar por código o nombre"
+        ),
+    ] = None,
+    activo: Annotated[
+        bool | None,
+        Query(
+            description="Filtrar por activo/inactivo"
+        ),
+    ] = True,
+) -> list[dict]:
+    return listar_tipos_contratacion(
+        db=db,
+        q=q,
+        activo=activo,
+    )
 
 @router.get(
     "/tipos-turno",

@@ -1,247 +1,334 @@
-import { Link, useParams } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { Link, useParams, useNavigate } from "react-router-dom";
 import {
   ArrowLeft,
+  Calendar,
   CheckCircle2,
   Clock,
-  FileWarning,
-  Save,
-  UserRound,
+  FileText,
+  User,
   XCircle,
 } from "lucide-react";
 
 import PageHeader from "../../components/layout/PageHeader";
-import { mockIncidents } from "../../data/mockIncidents";
+import { getIncidencia, revisarIncidencia } from "../../api/incidenciasApi";
 
-function getStatusClass(status) {
-  if (status === "Pendiente") return "badge warning";
-  if (status === "Aprobada") return "badge success";
-  if (status === "Rechazada") return "badge danger";
-  if (status === "Sin justificar") return "badge danger";
+function getStatusClass(estatus) {
+  const s = (estatus || "").toUpperCase();
+  if (s === "PENDIENTE") return "badge warning";
+  if (s === "SIN_JUSTIFICAR") return "badge danger";
+  if (s === "JUSTIFICADA") return "badge success";
+  if (s === "APROBADA") return "badge success";
+  if (s === "RECHAZADA") return "badge danger";
+  if (s === "CANCELADA") return "badge neutral";
   return "badge neutral";
+}
+
+function getStatusLabel(estatus) {
+  const labels = {
+    PENDIENTE: "Pendiente",
+    SIN_JUSTIFICAR: "Sin justificar",
+    JUSTIFICADA: "Justificada",
+    APROBADA: "Aprobada",
+    RECHAZADA: "Rechazada",
+    CANCELADA: "Cancelada",
+  };
+  return labels[(estatus || "").toUpperCase()] || estatus || "";
+}
+
+function formatDate(value) {
+  if (!value) return "—";
+  try {
+    const d = new Date(value + "T00:00:00");
+    return d.toLocaleDateString("es-MX", { day: "2-digit", month: "long", year: "numeric" });
+  } catch {
+    return value;
+  }
+}
+
+function formatDateTime(value) {
+  if (!value) return "—";
+  try {
+    const d = new Date(value);
+    return d.toLocaleString("es-MX", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return value;
+  }
 }
 
 function IncidentDetailPage() {
   const { incidentId } = useParams();
+  const navigate = useNavigate();
 
-  const incident = mockIncidents.find((item) => item.id === Number(incidentId));
+  const [incidencia, setIncidencia] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
-  if (!incident) {
-    return (
-      <div className="page-stack">
-        <PageHeader
-          title="Incidencia no encontrada"
-          description="No existe una incidencia con el identificador solicitado."
-        />
+  // Review form
+  const [comentario, setComentario] = useState("");
+  const [reviewLoading, setReviewLoading] = useState(false);
+  const [reviewError, setReviewError] = useState("");
 
-        <Link className="secondary-button link-button fit-content" to="/incidents">
-          <ArrowLeft size={17} />
-          Volver a incidencias
-        </Link>
-      </div>
-    );
+  useEffect(() => {
+    loadIncidencia();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [incidentId]);
+
+  async function loadIncidencia() {
+    setLoading(true);
+    setError("");
+    try {
+      const data = await getIncidencia(incidentId);
+      setIncidencia(data);
+    } catch (err) {
+      setError(err.message || "Error al cargar la incidencia.");
+    } finally {
+      setLoading(false);
+    }
   }
+
+  async function handleReview(nuevoEstatus) {
+    setReviewLoading(true);
+    setReviewError("");
+    try {
+      await revisarIncidencia(incidentId, {
+        estatus: nuevoEstatus,
+        comentario_revision: comentario || null,
+      });
+      // Recargar datos
+      await loadIncidencia();
+      setComentario("");
+    } catch (err) {
+      setReviewError(err.message || "Error al procesar la revisión.");
+    } finally {
+      setReviewLoading(false);
+    }
+  }
+
+  const canReview =
+    incidencia &&
+    (incidencia.estatus === "PENDIENTE" || incidencia.estatus === "SIN_JUSTIFICAR");
 
   return (
     <div className="page-stack">
       <PageHeader
-        title={incident.folio}
-        description="Detalle de incidencia, evidencia de asistencia y resolución administrativa."
+        title="Detalle de incidencia"
+        description={incidencia ? `#${incidencia.id} — ${incidencia.tipo_nombre}` : "Cargando..."}
       >
         <div className="header-actions">
           <Link className="secondary-button link-button" to="/incidents">
             <ArrowLeft size={17} />
             Volver
           </Link>
-
-          <button className="primary-button" type="button">
-            <Save size={17} />
-            Guardar resolución
-          </button>
         </div>
       </PageHeader>
 
-      <section className="incident-detail-grid">
-        <article className="panel-card incident-main-card">
-          <div className="incident-title-row">
-            <div className="incident-icon">
-              <FileWarning size={26} />
+      {error && (
+        <div className="panel-card">
+          <div className="empty-state">
+            <h3>Error</h3>
+            <p>{error}</p>
+          </div>
+        </div>
+      )}
+
+      {loading && (
+        <div className="panel-card">
+          <div className="empty-state">
+            <h3>Cargando...</h3>
+            <p>Obteniendo detalle de la incidencia.</p>
+          </div>
+        </div>
+      )}
+
+      {!loading && incidencia && (
+        <>
+          {/* Info principal */}
+          <section className="panel-card">
+            <div className="panel-header">
+              <div>
+                <h3>Información de la incidencia</h3>
+                <p>
+                  <span className={getStatusClass(incidencia.estatus)}>
+                    {getStatusLabel(incidencia.estatus)}
+                  </span>
+                </p>
+              </div>
+              <FileText size={22} />
             </div>
 
-            <div>
-              <h3>{incident.type}</h3>
-              <p>{incident.reason}</p>
-            </div>
-          </div>
-
-          <div className="incident-status-row">
-            <span className={getStatusClass(incident.status)}>
-              {incident.status}
-            </span>
-            <span className="badge neutral">Prioridad {incident.priority}</span>
-            <span className="badge neutral">Origen {incident.generatedBy}</span>
-          </div>
-        </article>
-
-        <article className="panel-card employee-profile-card">
-          <div className="large-avatar">
-            <UserRound size={42} />
-          </div>
-
-          <h3>{incident.employeeName}</h3>
-          <p>{incident.department}</p>
-
-          <div className="profile-badges">
-            <span className="badge neutral">{incident.employeeCode}</span>
-            <span className="badge neutral">{incident.date}</span>
-          </div>
-        </article>
-      </section>
-
-      <section className="metrics-grid three-columns">
-        <article className="metric-card">
-          <div className="metric-icon">
-            <Clock size={22} />
-          </div>
-          <div>
-            <p>Horario esperado</p>
-            <strong className="metric-text">{incident.expectedSchedule}</strong>
-            <span>Jornada asignada</span>
-          </div>
-        </article>
-
-        <article className="metric-card">
-          <div className="metric-icon">
-            <CheckCircle2 size={22} />
-          </div>
-          <div>
-            <p>Entrada / Salida</p>
-            <strong className="metric-text">
-              {incident.entryTime || "—"} / {incident.exitTime || "—"}
-            </strong>
-            <span>Registros del día</span>
-          </div>
-        </article>
-
-        <article className="metric-card">
-          <div className="metric-icon">
-            <Clock size={22} />
-          </div>
-          <div>
-            <p>Tiempo extra</p>
-            <strong>{incident.extraTime}</strong>
-            <span>
-              {incident.extraStart || "Sin inicio"} - {incident.extraEnd || "Sin fin"}
-            </span>
-          </div>
-        </article>
-      </section>
-
-      <section className="incident-review-grid">
-        <article className="panel-card">
-          <div className="panel-header">
-            <div>
-              <h3>Datos de la incidencia</h3>
-              <p>Información generada por el sistema o capturada manualmente.</p>
-            </div>
-          </div>
-
-          <div className="info-grid">
-            <div>
-              <span>Folio</span>
-              <strong>{incident.folio}</strong>
+            <div className="report-info-grid">
+              <div>
+                <span>Tipo</span>
+                <strong>{incidencia.tipo_nombre}</strong>
+              </div>
+              <div>
+                <span>Categoría</span>
+                <strong>{incidencia.tipo_categoria}</strong>
+              </div>
+              <div>
+                <span>Fecha</span>
+                <strong>{formatDate(incidencia.fecha)}</strong>
+              </div>
+              <div>
+                <span>Origen</span>
+                <strong>{incidencia.origen === "PROCESAMIENTO" ? "Automático" : "Manual"}</strong>
+              </div>
+              <div>
+                <span>Puntos originales</span>
+                <strong>{incidencia.puntos_originales}</strong>
+              </div>
+              <div>
+                <span>Puntos justificados</span>
+                <strong>{incidencia.puntos_justificados}</strong>
+              </div>
+              <div>
+                <span>Puntos efectivos</span>
+                <strong>{incidencia.puntos_efectivos}</strong>
+              </div>
+              <div>
+                <span>Requiere revisión</span>
+                <strong>{incidencia.requiere_revision ? "Sí" : "No"}</strong>
+              </div>
             </div>
 
-            <div>
-              <span>Fecha</span>
-              <strong>
-                {incident.date} / {incident.day}
-              </strong>
+            {incidencia.descripcion && (
+              <div className="report-info-grid" style={{ marginTop: "1rem" }}>
+                <div style={{ gridColumn: "1 / -1" }}>
+                  <span>Descripción</span>
+                  <strong>{incidencia.descripcion}</strong>
+                </div>
+              </div>
+            )}
+          </section>
+
+          {/* Empleado */}
+          <section className="panel-card">
+            <div className="panel-header">
+              <div>
+                <h3>Empleado</h3>
+              </div>
+              <User size={22} />
             </div>
 
-            <div>
-              <span>Tipo</span>
-              <strong>{incident.type}</strong>
+            <div className="report-info-grid">
+              <div>
+                <span>Código</span>
+                <strong>{incidencia.codigo_empleado}</strong>
+              </div>
+              <div>
+                <span>Nombre</span>
+                <strong>{incidencia.nombre_empleado}</strong>
+              </div>
+              <div>
+                <span>Departamento</span>
+                <strong>{incidencia.departamento || "Sin departamento"}</strong>
+              </div>
             </div>
+          </section>
 
-            <div>
-              <span>Estatus</span>
-              <strong>{incident.status}</strong>
-            </div>
+          {/* Revisión */}
+          {incidencia.fecha_revision && (
+            <section className="panel-card">
+              <div className="panel-header">
+                <div>
+                  <h3>Resolución</h3>
+                </div>
+                <Calendar size={22} />
+              </div>
 
-            <div>
-              <span>Fuente</span>
-              <strong>{incident.source}</strong>
-            </div>
+              <div className="report-info-grid">
+                <div>
+                  <span>Fecha de revisión</span>
+                  <strong>{formatDateTime(incidencia.fecha_revision)}</strong>
+                </div>
+                {incidencia.comentario_revision && (
+                  <div style={{ gridColumn: "1 / -1" }}>
+                    <span>Comentario</span>
+                    <strong>{incidencia.comentario_revision}</strong>
+                  </div>
+                )}
+              </div>
+            </section>
+          )}
 
-            <div>
-              <span>Solicitado por</span>
-              <strong>{incident.requestedBy}</strong>
-            </div>
+          {/* Formulario de revisión */}
+          {canReview && (
+            <section className="panel-card">
+              <div className="panel-header">
+                <div>
+                  <h3>Revisar incidencia</h3>
+                  <p>Aprobar, rechazar o cancelar esta incidencia.</p>
+                </div>
+                <Clock size={22} />
+              </div>
 
-            <div>
-              <span>Revisado por</span>
-              <strong>{incident.reviewedBy || "Pendiente"}</strong>
-            </div>
+              {reviewError && (
+                <div className="form-error-message">{reviewError}</div>
+              )}
 
-            <div>
-              <span>Fecha de revisión</span>
-              <strong>{incident.reviewedAt || "Pendiente"}</strong>
-            </div>
-          </div>
-        </article>
-
-        <article className="panel-card">
-          <div className="panel-header">
-            <div>
-              <h3>Resolución administrativa</h3>
-              <p>Captura visual para aprobar, rechazar o justificar.</p>
-            </div>
-          </div>
-
-          <div className="form-section">
-            <div className="form-grid one-column">
-              <label>
-                Estatus de resolución
-                <select defaultValue={incident.status}>
-                  <option>Pendiente</option>
-                  <option>Aprobada</option>
-                  <option>Rechazada</option>
-                  <option>Sin justificar</option>
-                </select>
-              </label>
-
-              <label>
-                Tratamiento / Justificación
+              <div className="form-field" style={{ marginTop: "0.5rem" }}>
+                <label htmlFor="review-comment">Comentario de revisión</label>
                 <textarea
-                  rows="6"
-                  placeholder="Escribe la justificación, resolución o comentario administrativo..."
-                  defaultValue={incident.justification}
+                  id="review-comment"
+                  rows={3}
+                  placeholder="Observaciones sobre la resolución (opcional)..."
+                  value={comentario}
+                  onChange={(e) => setComentario(e.target.value)}
+                  style={{
+                    width: "100%",
+                    padding: "10px 12px",
+                    border: "1px solid #d8d1d4",
+                    borderRadius: "8px",
+                    fontFamily: "inherit",
+                    fontSize: "0.9rem",
+                    resize: "vertical",
+                  }}
                 />
-              </label>
+              </div>
 
-              <label>
-                Observaciones internas
-                <textarea
-                  rows="4"
-                  placeholder="Notas internas para RH o Super Admin..."
-                />
-              </label>
-            </div>
+              <div className="modal-footer" style={{ borderTop: "none", paddingTop: "12px" }}>
+                <button
+                  className="secondary-button"
+                  type="button"
+                  disabled={reviewLoading}
+                  onClick={() => handleReview("CANCELADA")}
+                >
+                  <XCircle size={17} />
+                  Cancelar incidencia
+                </button>
 
-            <div className="incident-actions">
-              <button className="secondary-button" type="button">
-                <XCircle size={17} />
-                Rechazar
-              </button>
+                <button
+                  className="secondary-button"
+                  type="button"
+                  disabled={reviewLoading}
+                  onClick={() => handleReview("RECHAZADA")}
+                  style={{ color: "#dc2626", borderColor: "#fecaca" }}
+                >
+                  <XCircle size={17} />
+                  Rechazar
+                </button>
 
-              <button className="primary-button" type="button">
-                <CheckCircle2 size={17} />
-                Aprobar
-              </button>
-            </div>
-          </div>
-        </article>
-      </section>
+                <button
+                  className="primary-button"
+                  type="button"
+                  disabled={reviewLoading}
+                  onClick={() => handleReview("APROBADA")}
+                >
+                  <CheckCircle2 size={17} />
+                  {reviewLoading ? "Procesando..." : "Aprobar"}
+                </button>
+              </div>
+            </section>
+          )}
+        </>
+      )}
     </div>
   );
 }
