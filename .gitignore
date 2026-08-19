@@ -18,7 +18,9 @@ backend/.venv/
 .env
 .env.*
 !.env.example
+!.env.test.example
 !backend/.env.example
+!backend/.env.test.example
 *.pem
 *.key
 

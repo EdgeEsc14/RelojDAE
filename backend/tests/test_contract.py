@@ -280,73 +280,26 @@ class TestContratoJornadaEnCurso:
 
 class TestRequierenIntegracion:
     """
-    Estos tests documentan casos que no pueden probarse unitariamente
-    y requerirán una BD de tests en fase posterior.
-
-    NO implementan lógica — solo documentan el requisito.
+    Tests que requieren infraestructura HTTP (TestClient + JWT).
+    Los demás fueron implementados en test_motor_integration.py.
     """
 
-    @pytest.mark.skip(reason="Requiere BD: ausencia total integrada con calendario")
-    def test_ausencia_total_empleado_activo_con_horario(self):
-        """§6: Empleado activo + horario + día laboral + 0 marcaciones → FALTA."""
-        pass
-
-    @pytest.mark.skip(reason="Requiere BD: calendario laboral")
-    def test_dia_no_laboral_no_genera_falta(self):
-        """§3: DIA_NO_LABORAL + 0 marcaciones ≠ FALTA."""
-        pass
-
-    @pytest.mark.skip(reason="Requiere BD: calendario laboral extraordinario")
-    def test_laborable_extraordinario_se_procesa(self):
-        """§3: LABORABLE_EXTRAORDINARIO → procesamiento normal."""
-        pass
-
-    @pytest.mark.skip(reason="Requiere BD: horario_dias")
-    def test_horario_dias_sobrescribe_entrada_salida(self):
-        """§4: horario_dias puede sobrescribir hora entrada/salida."""
-        pass
-
-    @pytest.mark.skip(reason="Requiere BD: resolución de política")
-    def test_cero_politicas_error_explicito(self):
-        """§5: 0 políticas aplicables → error explícito."""
-        pass
-
-    @pytest.mark.skip(reason="Requiere BD: resolución de política")
-    def test_multiples_politicas_error_explicito(self):
-        """§5: múltiples políticas solapadas → error explícito."""
-        pass
-
-    @pytest.mark.skip(reason="Requiere BD: idempotencia")
-    def test_reprocesar_mismo_dia_idempotente(self):
-        """§13: procesar 2 veces (empleado, fecha) → mismo resultado."""
-        pass
-
-    @pytest.mark.skip(reason="Requiere BD: turno nocturno completo")
-    def test_turno_nocturno_salida_dia_siguiente(self):
-        """§12: entrada día D, salida día D+1 → asistencia del día D."""
-        pass
-
-    @pytest.mark.skip(reason="Requiere BD: múltiples marcaciones")
-    def test_multiples_marcaciones_una_asistencia(self):
-        """§11: varias marcaciones → una sola asistencia_diaria."""
-        pass
-
-    @pytest.mark.skip(reason="Requiere BD/HTTP: autorización TOTAL")
+    @pytest.mark.skip(reason="Requiere HTTP TestClient + JWT: autorización TOTAL")
     def test_autorizacion_total_accede(self):
         """§16: usuario TOTAL puede consultar y procesar."""
         pass
 
-    @pytest.mark.skip(reason="Requiere BD/HTTP: autorización AREA")
+    @pytest.mark.skip(reason="Requiere HTTP TestClient + JWT: autorización AREA")
     def test_autorizacion_area_no_ve_otras(self):
         """§16: usuario AREA no obtiene datos de otra área."""
         pass
 
-    @pytest.mark.skip(reason="Requiere BD/HTTP: autorización PROPIO")
+    @pytest.mark.skip(reason="Requiere HTTP TestClient + JWT: autorización PROPIO")
     def test_autorizacion_propio_no_ve_otros(self):
         """§16: usuario PROPIO no obtiene otros empleados."""
         pass
 
-    @pytest.mark.skip(reason="Requiere BD/HTTP: autorización LECTURA")
+    @pytest.mark.skip(reason="Requiere HTTP TestClient + JWT: autorización LECTURA")
     def test_autorizacion_lectura_no_procesa(self):
         """§16: LECTURA no puede ejecutar POST /asistencia/procesar."""
         pass
