@@ -1,0 +1,7 @@
+# Dependencias de desarrollo para RelojDAE.
+# Incluye las dependencias productivas y agrega herramientas de testing.
+
+-r requirements.txt
+
+pytest==9.1.1
+pytest-cov==7.1.0
