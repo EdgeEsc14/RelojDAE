@@ -6,6 +6,10 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.repositories.zk_employee_link_repo import (
+    resolver_empleado_id_para_marcacion,
+)
+
 
 def _clean_text(value: Any) -> str:
     if value is None:
@@ -63,7 +67,7 @@ def insertar_marcaciones_crudas(
             raw_payload,
             sync_run_id
         )
-        SELECT
+        VALUES (
             :dispositivo_origen,
             :dispositivo_ip,
             :zk_uid_registro,
@@ -73,19 +77,11 @@ def insertar_marcaciones_crudas(
             :punch_label,
             :status,
             :status_label,
-            empleado_match.id,
-            empleado_match.codigo_empleado,
+            :empleado_id,
+            :codigo_empleado,
             CAST(:raw_payload AS jsonb),
             :sync_run_id
-        FROM (
-            SELECT
-                e.id,
-                e.codigo_empleado
-            FROM personal.empleados e
-            WHERE e.zk_user_id = :zk_user_id
-            LIMIT 1
-        ) AS empleado_match
-        RIGHT JOIN (SELECT 1 AS dummy) AS base ON TRUE
+        )
         ON CONFLICT DO NOTHING
         RETURNING id
         """
@@ -96,6 +92,7 @@ def insertar_marcaciones_crudas(
     duplicadas = 0
     omitidas = 0
     errores: list[dict[str, Any]] = []
+    conflictos: list[dict[str, Any]] = []
 
     for record in records:
         try:
@@ -112,6 +109,25 @@ def insertar_marcaciones_crudas(
                 )
                 continue
 
+            # Resolución de empleado_id: dispositivos.empleado_dispositivo
+            # es la fuente canónica (dispositivo_origen + zk_user_id);
+            # personal.empleados.zk_user_id solo actúa como fallback
+            # legacy cuando no hay relación resoluble (Contrato §10).
+            resolucion = resolver_empleado_id_para_marcacion(
+                db=db,
+                dispositivo_origen=dispositivo_origen,
+                zk_user_id=zk_user_id,
+            )
+
+            if resolucion["conflicto"]:
+                conflictos.append(
+                    {
+                        "dispositivo_origen": dispositivo_origen,
+                        "zk_user_id": zk_user_id,
+                        "detalle": resolucion["detalle"],
+                    }
+                )
+
             result = db.execute(
                 insert_query,
                 {
@@ -124,6 +140,8 @@ def insertar_marcaciones_crudas(
                     "punch_label": record.get("punch_label"),
                     "status": record.get("status"),
                     "status_label": record.get("status_label"),
+                    "empleado_id": resolucion["empleado_id"],
+                    "codigo_empleado": resolucion["codigo_empleado"],
                     "raw_payload": _json_payload(record),
                     "sync_run_id": sync_run_id,
                 },
@@ -151,6 +169,7 @@ def insertar_marcaciones_crudas(
         "duplicadas": duplicadas,
         "omitidas": omitidas,
         "errores": errores,
+        "conflictos": conflictos,
     }
 
 

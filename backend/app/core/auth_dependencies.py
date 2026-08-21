@@ -7,6 +7,8 @@ from fastapi.security import (
     HTTPAuthorizationCredentials,
     HTTPBearer,
 )
+from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.core.access_control import (
@@ -30,6 +32,37 @@ def normalize_role(value) -> str:
         .replace("-", "_")
         .replace(" ", "_")
     )
+
+
+def _set_audit_context(db: Session, user: dict) -> None:
+    """
+    Adjunta la identidad del usuario de aplicación a la transacción
+    actual mediante los GUCs de sesión que el trigger de auditoría
+    (migración 035, auditoria.fn_registrar_bitacora) ya lee vía
+    current_setting('app.usuario_id'/'app.usuario_correo', TRUE).
+
+    Sin esto, auditoria.bitacora.usuario_app_id/usuario_app_correo
+    quedaban siempre NULL: la infraestructura de auditoría existía
+    pero nunca se le decía quién es el usuario de la petición.
+
+    set_config(..., is_local=TRUE) es transaccional: se limpia solo al
+    hacer commit/rollback y nunca contamina otra request que reutilice
+    la misma conexión del pool (a diferencia de SET, que persistiría
+    en la conexión física).
+    """
+    try:
+        db.execute(
+            text("SELECT set_config('app.usuario_id', :val, TRUE)"),
+            {"val": str(user["id"])},
+        )
+        db.execute(
+            text("SELECT set_config('app.usuario_correo', :val, TRUE)"),
+            {"val": str(user.get("correo") or "")},
+        )
+    except SQLAlchemyError:
+        # No bloquear la request por un problema al fijar el contexto
+        # de auditoría: esos cambios simplemente quedarán sin atribuir.
+        pass
 
 
 def get_current_user(
@@ -78,6 +111,8 @@ def get_current_user(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Usuario no activo.",
         )
+
+    _set_audit_context(db, user)
 
     return user
 
@@ -147,6 +182,15 @@ def require_module_access(
             Depends(get_current_user),
         ],
     ) -> AccessScope:
+        if current_user.get("requiere_cambio_password"):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    "Debes cambiar tu contraseña temporal antes de "
+                    "continuar. Usa POST /auth/change-password."
+                ),
+            )
+
         access_scope = build_access_scope(
             db=db,
             current_user=current_user,

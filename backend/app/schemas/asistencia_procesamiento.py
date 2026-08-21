@@ -1,4 +1,5 @@
 from datetime import date
+from typing import Any
 
 from pydantic import BaseModel, model_validator
 
@@ -36,3 +37,8 @@ class ProcesarAsistenciaResponse(BaseModel):
     registros_encontrados: int
     procesadas: int
     errores: list[dict]
+    # La acumulación de puntos corre después de procesar asistencia y
+    # nunca debe convertir un procesamiento exitoso en un 500: si falla
+    # (p. ej. periodo de evaluación sin resolver), se reporta aquí en
+    # vez de propagar la excepción (ver post_procesar_asistencia).
+    acumulacion_puntos: dict[str, Any] | None = None

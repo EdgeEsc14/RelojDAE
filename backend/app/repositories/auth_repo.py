@@ -141,6 +141,39 @@ def obtener_usuario_por_id(
     return _user_from_row(row)
 
 
+def actualizar_password_propio(
+    *,
+    db: Session,
+    usuario_id: int,
+    password_hash: str,
+) -> None:
+    """
+    Guarda la nueva contraseña (ya hasheada) del propio usuario y limpia
+    requiere_cambio_password: tras el cambio, la contraseña temporal
+    anterior deja de servir (se sobrescribe su hash) y el usuario puede
+    ingresar normalmente.
+    """
+    query = text(
+        """
+        UPDATE seguridad.usuarios
+        SET
+            password_hash = :password_hash,
+            requiere_cambio_password = FALSE,
+            fecha_modificacion = NOW()
+        WHERE id = :usuario_id
+        """
+    )
+
+    db.execute(
+        query,
+        {
+            "usuario_id": usuario_id,
+            "password_hash": password_hash,
+        },
+    )
+    db.commit()
+
+
 def actualizar_ultimo_login(
     *,
     db: Session,

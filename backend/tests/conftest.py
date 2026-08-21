@@ -323,6 +323,19 @@ def db_motor(test_engine, apply_baseline):
     # Limpiar tablas de datos (TRUNCATE solo en dae_reloj_test)
     session.execute(text(
         "TRUNCATE "
+        "auditoria.bitacora, "
+        "seguridad.login_auditoria, "
+        "seguridad.usuarios_unidades, "
+        "seguridad.usuarios, "
+        "seguridad.permisos_rol, "
+        "seguridad.modulos, "
+        "seguridad.roles, "
+        "dispositivos.empleado_dispositivo, "
+        "dispositivos.dispositivos, "
+        "asistencia.movimientos_puntos, "
+        "asistencia.resumen_periodo_empleado, "
+        "asistencia.incidencias, "
+        "asistencia.tipos_incidencia, "
         "asistencia.asistencias_diarias, "
         "asistencia.marcaciones_crudas, "
         "asistencia.calendario_eventos, "
@@ -348,6 +361,19 @@ def db_motor(test_engine, apply_baseline):
         if str(db_name_post) == "dae_reloj_test":
             session.execute(text(
                 "TRUNCATE "
+                "auditoria.bitacora, "
+                "seguridad.login_auditoria, "
+        "seguridad.usuarios_unidades, "
+                "seguridad.usuarios, "
+                "seguridad.permisos_rol, "
+                "seguridad.modulos, "
+                "seguridad.roles, "
+                "dispositivos.empleado_dispositivo, "
+                "dispositivos.dispositivos, "
+                "asistencia.movimientos_puntos, "
+                "asistencia.resumen_periodo_empleado, "
+                "asistencia.incidencias, "
+                "asistencia.tipos_incidencia, "
                 "asistencia.asistencias_diarias, "
                 "asistencia.marcaciones_crudas, "
                 "asistencia.calendario_eventos, "
@@ -438,3 +464,36 @@ def seed_motor(db_motor):
         "horario_codigo": "HORARIO_TEST",
         "politica_codigo": "POLITICA_DAE_GENERAL",
     }
+
+
+# ============================================================
+# FIXTURE: cliente HTTP real (TestClient) para tests de autorización
+# ============================================================
+
+
+@pytest.fixture(scope="function")
+def api_client(db_motor):
+    """
+    TestClient de FastAPI con get_db sobreescrito para usar la misma
+    sesión de db_motor (mismo aislamiento/TRUNCATE por test).
+
+    Permite ejercer la autorización real de extremo a extremo: JWT real
+    (create_access_token/decode_access_token) + dependencias de
+    autorización reales (require_module_access, build_access_scope),
+    sin mockear nada de la capa de seguridad.
+    """
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    from app.core.database import get_db
+
+    def _override_get_db():
+        yield db_motor
+
+    app.dependency_overrides[get_db] = _override_get_db
+
+    try:
+        with TestClient(app) as client:
+            yield client
+    finally:
+        app.dependency_overrides.pop(get_db, None)

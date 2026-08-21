@@ -12,17 +12,18 @@ from pydantic import BaseModel, Field, field_validator
 
 
 class UsuarioCreateRequest(BaseModel):
-    """Payload para crear un usuario del sistema."""
+    """
+    Payload para crear un usuario del sistema.
+
+    No incluye contraseña: el backend siempre genera una contraseña
+    temporal aleatoria y segura, que se devuelve una única vez en la
+    respuesta de creación (campo `password_temporal`).
+    """
 
     correo_electronico: str = Field(
         min_length=5,
         max_length=150,
         description="Correo electrónico del usuario (se usa para login).",
-    )
-    password: str = Field(
-        min_length=8,
-        max_length=200,
-        description="Contraseña inicial del usuario.",
     )
     rol_id: int = Field(
         description="ID del rol a asignar (de seguridad.roles).",
@@ -126,6 +127,18 @@ class UsuarioResponse(BaseModel):
     ultimo_login: datetime | None = None
     fecha_creacion: datetime | None = None
     fecha_modificacion: datetime | None = None
+
+
+class UsuarioCreadoResponse(UsuarioResponse):
+    """
+    Respuesta de la creación de un usuario.
+
+    Incluye `password_temporal` en texto plano — únicamente en esta
+    respuesta, una sola vez. Nunca se persiste ni se puede volver a
+    consultar; el usuario deberá cambiarla en su primer inicio de sesión.
+    """
+
+    password_temporal: str
 
 
 class UsuarioListResponse(BaseModel):

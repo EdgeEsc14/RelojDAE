@@ -16,6 +16,14 @@ from fastapi.responses import FileResponse
 
 from app.core.access_control import AccessScope
 from app.core.auth_dependencies import require_module_access
+from app.schemas.branding import (
+    ConfiguracionInstitucionalResponse,
+    ConfiguracionInstitucionalUpdate,
+)
+from app.services.institucion_config import (
+    guardar_configuracion_institucional,
+    obtener_configuracion_institucional,
+)
 
 
 router = APIRouter(
@@ -207,3 +215,41 @@ def delete_logo(
         "ok": True,
         "message": "Logo eliminado correctamente.",
     }
+
+
+# ============================================================
+# GET /branding/config — Configuración institucional (nombre,
+# nombre corto, pie de página). Fuente real usada por los
+# generadores de reportes: nunca hardcodear estos valores ahí.
+# ============================================================
+
+@router.get("/config", response_model=ConfiguracionInstitucionalResponse)
+def get_configuracion_institucional():
+    return obtener_configuracion_institucional()
+
+
+# ============================================================
+# PUT /branding/config — Actualizar configuración institucional
+# ============================================================
+
+@router.put("/config", response_model=ConfiguracionInstitucionalResponse)
+def put_configuracion_institucional(
+    payload: ConfiguracionInstitucionalUpdate,
+    _access_scope: Annotated[
+        AccessScope,
+        Depends(
+            require_module_access("CONFIGURACION", "editar")
+        ),
+    ],
+):
+    try:
+        return guardar_configuracion_institucional(
+            nombre_institucion=payload.nombre_institucion,
+            nombre_corto=payload.nombre_corto,
+            pie_pagina=payload.pie_pagina,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc

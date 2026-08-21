@@ -19,9 +19,15 @@ class AuthUserResponse(BaseModel):
     empleado_id: int | None = None
     codigo_empleado: str | None = None
     nombre_empleado: str | None = None
+    requiere_cambio_password: bool = False
 
 
 class AuthTokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     user: AuthUserResponse
+
+
+class AuthChangePasswordRequest(BaseModel):
+    password_actual: str = Field(..., min_length=1, max_length=255)
+    password_nueva: str = Field(..., min_length=8, max_length=200)

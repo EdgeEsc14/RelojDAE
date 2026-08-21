@@ -8,6 +8,14 @@ Reglas de negocio:
 
 Este servicio se ejecuta después del procesamiento de asistencia diaria
 para mantener actualizada la acumulación de puntos y detectar condiciones.
+
+asistencia.movimientos_puntos.periodo_evaluacion_id es NOT NULL con FK
+a asistencia.periodos_evaluacion: nunca se inserta un movimiento sin
+resolver primero un periodo ABIERTO real y único para la fecha
+correspondiente (ver periodo_evaluacion_service). Si no hay ninguno o
+hay más de uno, esa fecha/detección se omite y se reporta explícitamente
+en "periodos_no_resueltos" — nunca se inventa un id ni se elige uno
+arbitrariamente entre varios.
 """
 
 from __future__ import annotations
@@ -18,10 +26,29 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.services.periodo_evaluacion_service import (
+    ResolucionPeriodo,
+    resolver_periodo_vigente,
+)
+
 
 PUNTOS_POR_DO = 10
 DOS_PARA_REVISION_BAJA = 7
 FALTAS_CONSECUTIVAS_PARA_BAJA = 3
+
+
+def _problema_periodo(
+    resolucion: ResolucionPeriodo,
+    contexto: str,
+) -> dict[str, Any]:
+    """Representación explícita y auditable de una fecha sin periodo
+    resoluble (0 o >1 periodos ABIERTO aplicables)."""
+    return {
+        "fecha": resolucion.fecha.isoformat(),
+        "contexto": contexto,
+        "estado": resolucion.estado,
+        "candidatos": [c["id"] for c in resolucion.candidatos],
+    }
 
 
 def acumular_puntos_periodo(
@@ -35,24 +62,50 @@ def acumular_puntos_periodo(
 
     Pasos:
     1. Identifica empleados con puntos_generados > 0 en asistencias_diarias.
-    2. Inserta movimientos de puntos (tipo CARGO) si no existen ya.
-    3. Calcula DOs generados cuando se acumulan 10 puntos.
+    2. Inserta movimientos de puntos (tipo CARGO) si no existen ya,
+       resolviendo el periodo de evaluación real por fecha.
+    3. Calcula DOs generados cuando se acumulan 10 puntos, en el
+       periodo vigente a fecha_fin.
     4. Detecta 3 faltas consecutivas.
     5. Actualiza resumen_periodo_empleado si existe.
 
-    Retorna resumen de la operación.
+    Retorna resumen de la operación, incluyendo cualquier fecha para
+    la que no fue posible resolver un único periodo de evaluación
+    (periodos_no_resueltos): esas fechas no generan movimientos ni
+    detecciones, pero tampoco impiden el resto del procesamiento.
     """
 
-    # Paso 1: Insertar movimientos de puntos por asistencias procesadas
-    movimientos_insertados = _insertar_movimientos_puntos(db, fecha_inicio, fecha_fin)
+    problemas_periodo: list[dict[str, Any]] = []
 
-    # Paso 2: Detectar empleados que alcanzaron 10 puntos → generar DO
-    dos_generados = _generar_dos_por_acumulacion(db, fecha_inicio, fecha_fin)
+    # Paso 1-2: Insertar movimientos de puntos por asistencias procesadas
+    movimientos_insertados, problemas_insercion = _insertar_movimientos_puntos(
+        db, fecha_inicio, fecha_fin
+    )
+    problemas_periodo.extend(problemas_insercion)
 
-    # Paso 3: Detectar 3 faltas consecutivas
-    alertas_faltas = _detectar_faltas_consecutivas(db, fecha_inicio, fecha_fin)
+    # Pasos 3-4 dependen del periodo vigente a fecha_fin ("el periodo
+    # activo" del rango procesado). Si no se puede resolver de forma
+    # única, se omiten sin abortar el resto de la acumulación.
+    resolucion_fin = resolver_periodo_vigente(db, fecha_fin)
 
-    # Paso 4: Actualizar resúmenes de periodo si existen
+    if resolucion_fin.estado == "OK":
+        periodo_id = resolucion_fin.periodo["id"]
+        dos_generados = _generar_dos_por_acumulacion(
+            db, fecha_inicio, fecha_fin, periodo_id
+        )
+        alertas_faltas = _detectar_faltas_consecutivas(
+            db, fecha_inicio, fecha_fin, periodo_id
+        )
+    else:
+        dos_generados = []
+        alertas_faltas = []
+        problemas_periodo.append(
+            _problema_periodo(resolucion_fin, contexto="deteccion_dos_y_bajas")
+        )
+
+    # Paso 5: no depende de resolver un periodo aquí (solo actualiza
+    # resúmenes ya existentes con estatus ABIERTO), por lo que corre
+    # siempre.
     resumenes_actualizados = _actualizar_resumenes_periodo(db, fecha_inicio, fecha_fin)
 
     db.commit()
@@ -64,54 +117,21 @@ def acumular_puntos_periodo(
         "dos_generados": dos_generados,
         "alertas_faltas_consecutivas": alertas_faltas,
         "resumenes_actualizados": resumenes_actualizados,
+        "periodos_no_resueltos": problemas_periodo,
     }
 
 
-def _insertar_movimientos_puntos(
+def _obtener_fechas_con_puntos_pendientes(
     db: Session,
     fecha_inicio: date,
     fecha_fin: date,
-) -> int:
-    """
-    Inserta movimientos de puntos (CARGO) para asistencias con puntos > 0
-    que aún no tienen movimiento registrado.
-    """
-
-    result = db.execute(
+) -> list[date]:
+    """Fechas del rango con asistencias procesadas con puntos > 0 que
+    todavía no tienen su movimiento CARGO registrado."""
+    rows = db.execute(
         text(
             """
-            INSERT INTO asistencia.movimientos_puntos (
-                empleado_id,
-                periodo_evaluacion_id,
-                fecha,
-                tipo_movimiento,
-                concepto,
-                puntos,
-                descripcion,
-                origen
-            )
-            SELECT
-                ad.empleado_id,
-                COALESCE(
-                    (
-                        SELECT pe.id
-                        FROM asistencia.periodos_evaluacion pe
-                        WHERE pe.estatus = 'ABIERTO'
-                          AND ad.fecha BETWEEN pe.fecha_inicio AND pe.fecha_fin
-                        LIMIT 1
-                    ),
-                    1
-                ) AS periodo_evaluacion_id,
-                ad.fecha,
-                'CARGO',
-                CASE ad.estatus
-                    WHEN 'RETARDO_MENOR' THEN 'Retardo menor'
-                    WHEN 'RETARDO_MAYOR' THEN 'Retardo mayor'
-                    ELSE 'Puntos por ' || ad.estatus
-                END,
-                ad.puntos_generados,
-                ad.observaciones,
-                'SISTEMA'
+            SELECT DISTINCT ad.fecha
             FROM asistencia.asistencias_diarias ad
             WHERE ad.fecha BETWEEN :fecha_inicio AND :fecha_fin
               AND ad.puntos_generados > 0
@@ -124,26 +144,99 @@ def _insertar_movimientos_puntos(
                     AND mp.tipo_movimiento = 'CARGO'
                     AND mp.origen = 'SISTEMA'
               )
+            ORDER BY ad.fecha
             """
         ),
-        {
-            "fecha_inicio": fecha_inicio,
-            "fecha_fin": fecha_fin,
-        },
-    )
+        {"fecha_inicio": fecha_inicio, "fecha_fin": fecha_fin},
+    ).scalars().all()
 
-    return result.rowcount
+    return list(rows)
+
+
+def _insertar_movimientos_puntos(
+    db: Session,
+    fecha_inicio: date,
+    fecha_fin: date,
+) -> tuple[int, list[dict[str, Any]]]:
+    """
+    Inserta movimientos de puntos (CARGO) para asistencias con puntos > 0
+    que aún no tienen movimiento registrado, resolviendo el periodo de
+    evaluación real para cada fecha (nunca un id fijo).
+
+    Retorna (movimientos_insertados, problemas_periodo).
+    """
+
+    fechas_pendientes = _obtener_fechas_con_puntos_pendientes(db, fecha_inicio, fecha_fin)
+
+    total_insertados = 0
+    problemas: list[dict[str, Any]] = []
+
+    for fecha in fechas_pendientes:
+        resolucion = resolver_periodo_vigente(db, fecha)
+
+        if resolucion.estado != "OK":
+            problemas.append(_problema_periodo(resolucion, contexto="insercion_movimientos"))
+            continue
+
+        result = db.execute(
+            text(
+                """
+                INSERT INTO asistencia.movimientos_puntos (
+                    empleado_id,
+                    periodo_evaluacion_id,
+                    fecha,
+                    tipo_movimiento,
+                    concepto,
+                    puntos,
+                    descripcion,
+                    origen
+                )
+                SELECT
+                    ad.empleado_id,
+                    :periodo_id,
+                    ad.fecha,
+                    'CARGO',
+                    CASE ad.estatus
+                        WHEN 'RETARDO_MENOR' THEN 'Retardo menor'
+                        WHEN 'RETARDO_MAYOR' THEN 'Retardo mayor'
+                        ELSE 'Puntos por ' || ad.estatus
+                    END,
+                    ad.puntos_generados,
+                    ad.observaciones,
+                    'SISTEMA'
+                FROM asistencia.asistencias_diarias ad
+                WHERE ad.fecha = :fecha
+                  AND ad.puntos_generados > 0
+                  AND ad.procesada = true
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM asistencia.movimientos_puntos mp
+                      WHERE mp.empleado_id = ad.empleado_id
+                        AND mp.fecha = ad.fecha
+                        AND mp.tipo_movimiento = 'CARGO'
+                        AND mp.origen = 'SISTEMA'
+                  )
+                """
+            ),
+            {"fecha": fecha, "periodo_id": resolucion.periodo["id"]},
+        )
+
+        total_insertados += result.rowcount
+
+    return total_insertados, problemas
 
 
 def _generar_dos_por_acumulacion(
     db: Session,
     fecha_inicio: date,
     fecha_fin: date,
+    periodo_id: int,
 ) -> list[dict[str, Any]]:
     """
     Para cada empleado con puntos procesados en el rango, verifica si
-    alcanzó múltiplos de 10 puntos acumulados en el periodo activo.
-    Si sí, registra el DO correspondiente.
+    alcanzó múltiplos de 10 puntos acumulados en el periodo vigente
+    (periodo_id, ya resuelto de forma única por el llamador). Si sí,
+    registra el DO correspondiente.
 
     Retorna lista de DOs generados.
     """
@@ -165,7 +258,7 @@ def _generar_dos_por_acumulacion(
     dos_generados = []
 
     for empleado_id in empleados_con_puntos:
-        # Calcular puntos acumulados en el periodo activo
+        # Calcular puntos acumulados en el periodo vigente
         row = db.execute(
             text(
                 """
@@ -182,16 +275,10 @@ def _generar_dos_por_acumulacion(
                     ) AS dos_existentes
                 FROM asistencia.movimientos_puntos mp
                 WHERE mp.empleado_id = :empleado_id
-                  AND mp.periodo_evaluacion_id = (
-                      SELECT pe.id
-                      FROM asistencia.periodos_evaluacion pe
-                      WHERE pe.estatus = 'ABIERTO'
-                        AND :fecha_fin BETWEEN pe.fecha_inicio AND pe.fecha_fin
-                      LIMIT 1
-                  )
+                  AND mp.periodo_evaluacion_id = :periodo_id
                 """
             ),
-            {"empleado_id": empleado_id, "fecha_fin": fecha_fin},
+            {"empleado_id": empleado_id, "periodo_id": periodo_id},
         ).mappings().first()
 
         if row is None:
@@ -222,13 +309,7 @@ def _generar_dos_por_acumulacion(
                     )
                     VALUES (
                         :empleado_id,
-                        (
-                            SELECT pe.id
-                            FROM asistencia.periodos_evaluacion pe
-                            WHERE pe.estatus = 'ABIERTO'
-                              AND :fecha BETWEEN pe.fecha_inicio AND pe.fecha_fin
-                            LIMIT 1
-                        ),
+                        :periodo_id,
                         :fecha,
                         'CARGO',
                         'Día de Omisión (DO)',
@@ -240,6 +321,7 @@ def _generar_dos_por_acumulacion(
                 ),
                 {
                     "empleado_id": empleado_id,
+                    "periodo_id": periodo_id,
                     "fecha": fecha_fin,
                     "descripcion": (
                         f"DO generado por acumulación de {PUNTOS_POR_DO} puntos. "
@@ -260,7 +342,7 @@ def _generar_dos_por_acumulacion(
                 _marcar_revision_baja(
                     db,
                     empleado_id=empleado_id,
-                    fecha_fin=fecha_fin,
+                    periodo_id=periodo_id,
                     motivo=(
                         f"Empleado acumuló {total_dos} Días de Omisión (DO) "
                         f"en el periodo. Requiere revisión conforme a política institucional."
@@ -274,6 +356,7 @@ def _detectar_faltas_consecutivas(
     db: Session,
     fecha_inicio: date,
     fecha_fin: date,
+    periodo_id: int,
 ) -> list[dict[str, Any]]:
     """
     Detecta empleados con 3 o más faltas consecutivas dentro del rango procesado.
@@ -338,7 +421,7 @@ def _detectar_faltas_consecutivas(
         _marcar_revision_baja(
             db,
             empleado_id=empleado_id,
-            fecha_fin=fecha_fin,
+            periodo_id=periodo_id,
             motivo=(
                 f"Empleado acumuló {faltas} faltas consecutivas "
                 f"del {desde} al {hasta}. "
@@ -359,16 +442,16 @@ def _detectar_faltas_consecutivas(
 def _marcar_revision_baja(
     db: Session,
     empleado_id: int,
-    fecha_fin: date,
+    periodo_id: int,
     motivo: str,
 ) -> None:
     """
     Marca un resumen de periodo como requiere_revision_baja.
-    Si no existe un resumen de periodo, lo crea.
+    Si no existe un resumen de periodo, no se crea uno nuevo: el
+    resumen se crea al abrir/cerrar periodos de evaluación.
     """
 
-    # Intentar actualizar resumen existente
-    result = db.execute(
+    db.execute(
         text(
             """
             UPDATE asistencia.resumen_periodo_empleado
@@ -380,26 +463,16 @@ def _marcar_revision_baja(
                 ),
                 fecha_modificacion = CURRENT_TIMESTAMP
             WHERE empleado_id = :empleado_id
-              AND periodo_evaluacion_id = (
-                  SELECT pe.id
-                  FROM asistencia.periodos_evaluacion pe
-                  WHERE pe.estatus = 'ABIERTO'
-                    AND :fecha_fin BETWEEN pe.fecha_inicio AND pe.fecha_fin
-                  LIMIT 1
-              )
+              AND periodo_evaluacion_id = :periodo_id
               AND requiere_revision_baja = FALSE
             """
         ),
         {
             "empleado_id": empleado_id,
-            "fecha_fin": fecha_fin,
+            "periodo_id": periodo_id,
             "motivo": motivo,
         },
     )
-
-    # Si no hay resumen existente, no lo creamos automáticamente.
-    # El resumen se crea al abrir/cerrar periodos de evaluación.
-    # Solo actualizamos si ya existe.
 
 
 def _actualizar_resumenes_periodo(
@@ -410,6 +483,9 @@ def _actualizar_resumenes_periodo(
     """
     Actualiza los contadores de resumen_periodo_empleado para los empleados
     con asistencia procesada en el rango, si tienen resumen de periodo abierto.
+
+    Solo actualiza filas ya existentes (rpe.estatus = 'ABIERTO'); no
+    inserta ninguna, por lo que no depende de resolver un periodo aquí.
     """
 
     result = db.execute(

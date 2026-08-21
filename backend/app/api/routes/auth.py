@@ -7,14 +7,25 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.core.security import create_access_token, decode_access_token, verify_password
+from app.core.security import (
+    create_access_token,
+    decode_access_token,
+    hash_password,
+    verify_password,
+)
 from app.repositories.auth_repo import (
+    actualizar_password_propio,
     actualizar_ultimo_login,
     obtener_usuario_por_correo,
     obtener_usuario_por_id,
     registrar_login_auditoria,
 )
-from app.schemas.auth import AuthLoginRequest, AuthTokenResponse, AuthUserResponse
+from app.schemas.auth import (
+    AuthChangePasswordRequest,
+    AuthLoginRequest,
+    AuthTokenResponse,
+    AuthUserResponse,
+)
 
 
 router = APIRouter(
@@ -78,6 +89,7 @@ def _public_user(user: dict) -> AuthUserResponse:
         empleado_id=user["empleado_id"],
         codigo_empleado=user["codigo_empleado"],
         nombre_empleado=user["nombre_empleado"],
+        requiere_cambio_password=bool(user.get("requiere_cambio_password")),
     )
 
 
@@ -164,18 +176,21 @@ def login(
                 user.get("estatus") or ""
             ).strip().upper()
 
-            resultados_controlados = {
+            # Debe coincidir con ck_login_auditoria_resultado (migración
+            # 055): solo BLOQUEADO y PENDIENTE_* son valores válidos
+            # idénticos al estatus; cualquier otro (INACTIVO, RECHAZADO,
+            # etc.) debe mapearse a USUARIO_INACTIVO para no violar el
+            # CHECK constraint al registrar la auditoría.
+            resultados_identicos_a_estatus = {
                 "PENDIENTE_VERIFICACION",
                 "PENDIENTE_APROBACION",
-                "INACTIVO",
-                "RECHAZADO",
                 "BLOQUEADO",
             }
 
             resultado = (
                 estatus_usuario
-                if estatus_usuario in resultados_controlados
-                else "INACTIVO"
+                if estatus_usuario in resultados_identicos_a_estatus
+                else "USUARIO_INACTIVO"
             )
 
             registrar_login_auditoria(
@@ -286,3 +301,41 @@ def me(
     current_user: Annotated[dict, Depends(get_current_user)],
 ):
     return _public_user(current_user)
+
+
+@router.post("/change-password", response_model=AuthUserResponse)
+def change_password(
+    payload: AuthChangePasswordRequest,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[dict, Depends(get_current_user)],
+):
+    """
+    Cambio de contraseña autoservicio (requiere la contraseña actual).
+
+    No pasa por require_module_access: debe seguir siendo alcanzable
+    aunque requiere_cambio_password esté en TRUE, para que el primer
+    login pueda completarse. Tras el cambio, requiere_cambio_password
+    queda en FALSE y la contraseña temporal anterior deja de servir
+    (su hash se sobrescribe).
+    """
+    if not verify_password(payload.password_actual, current_user["password_hash"]):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="La contraseña actual no es correcta.",
+        )
+
+    if payload.password_nueva == payload.password_actual:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="La nueva contraseña debe ser diferente de la actual.",
+        )
+
+    actualizar_password_propio(
+        db=db,
+        usuario_id=current_user["id"],
+        password_hash=hash_password(payload.password_nueva),
+    )
+
+    fresh_user = obtener_usuario_por_id(db=db, usuario_id=current_user["id"])
+
+    return _public_user(fresh_user)

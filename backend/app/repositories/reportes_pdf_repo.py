@@ -19,6 +19,9 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.core.access_control import AccessScope
+from app.repositories.reportes_repo import ACCESS_SCOPE_SQL
+
 
 def obtener_datos_reporte_empleado(
     db: Session,
@@ -26,16 +29,23 @@ def obtener_datos_reporte_empleado(
     codigo_empleado: str,
     fecha_inicio: date,
     fecha_fin: date,
+    access_scope: AccessScope,
 ) -> dict[str, Any] | None:
     """
     Obtiene todos los datos necesarios para generar el reporte PDF
     de un empleado en un rango de fechas.
 
-    Retorna None si el empleado no existe.
+    Aplica access_scope (TOTAL/AREA/PROPIO) igual que
+    reportes_repo.obtener_reporte_empleado: sin esto, cualquier
+    usuario autenticado con permiso de exportar podría descargar el
+    PDF de un empleado fuera de su alcance con solo conocer su
+    código.
+
+    Retorna None si el empleado no existe o está fuera del alcance.
     """
 
     # 1. Datos del empleado
-    empleado = _obtener_empleado(db, codigo_empleado)
+    empleado = _obtener_empleado(db, codigo_empleado, access_scope)
     if empleado is None:
         return None
 
@@ -71,11 +81,12 @@ def obtener_datos_reporte_empleado(
 def _obtener_empleado(
     db: Session,
     codigo_empleado: str,
+    access_scope: AccessScope,
 ) -> dict[str, Any] | None:
     """Obtiene datos completos del empleado para el encabezado del reporte."""
 
     query = text(
-        """
+        f"""
         SELECT
             e.id,
             e.codigo_empleado,
@@ -104,11 +115,20 @@ def _obtener_empleado(
             ON p.id = e.puesto_id
 
         WHERE e.codigo_empleado = :codigo_empleado
+          AND {ACCESS_SCOPE_SQL}
         LIMIT 1
         """
     )
 
-    row = db.execute(query, {"codigo_empleado": codigo_empleado}).mappings().first()
+    row = db.execute(
+        query,
+        {
+            "codigo_empleado": codigo_empleado,
+            "access_data_scope": access_scope.data_scope,
+            "access_employee_id": access_scope.employee_id,
+            "access_unit_ids": list(access_scope.allowed_unit_ids),
+        },
+    ).mappings().first()
 
     if row is None:
         return None
@@ -278,10 +298,14 @@ def _calcular_resumen(
     total_minutos_extra = 0
     total_minutos_retardo = 0
     dias_completos = 0
+    tolerancias = 0
     retardos_menores = 0
     retardos_mayores = 0
     faltas = 0
-    omisiones = 0
+    omisiones_entrada = 0
+    omisiones_salida = 0
+    dias_no_laborales = 0
+    dias_requieren_revision = 0
     puntos_totales = 0
 
     for a in asistencias:
@@ -291,16 +315,27 @@ def _calcular_resumen(
         total_minutos_retardo += int(a.get("minutos_retardo") or 0)
         puntos_totales += int(a.get("puntos_generados") or 0)
 
+        if a.get("requiere_revision"):
+            dias_requieren_revision += 1
+
         if estatus == "COMPLETO":
             dias_completos += 1
+        elif estatus == "TOLERANCIA":
+            tolerancias += 1
         elif estatus == "RETARDO_MENOR":
             retardos_menores += 1
         elif estatus == "RETARDO_MAYOR":
             retardos_mayores += 1
         elif estatus == "FALTA":
             faltas += 1
-        elif estatus in ("OMISION_ENTRADA", "OMISION_SALIDA"):
-            omisiones += 1
+        elif estatus == "OMISION_ENTRADA":
+            omisiones_entrada += 1
+        elif estatus == "OMISION_SALIDA":
+            omisiones_salida += 1
+        elif estatus == "DIA_NO_LABORAL":
+            dias_no_laborales += 1
+
+    omisiones = omisiones_entrada + omisiones_salida
 
     total_incidencias = len(incidencias)
     incidencias_justificadas = sum(
@@ -313,10 +348,15 @@ def _calcular_resumen(
     return {
         "total_dias": total_dias,
         "dias_completos": dias_completos,
+        "tolerancias": tolerancias,
         "retardos_menores": retardos_menores,
         "retardos_mayores": retardos_mayores,
         "faltas": faltas,
         "omisiones": omisiones,
+        "omisiones_entrada": omisiones_entrada,
+        "omisiones_salida": omisiones_salida,
+        "dias_no_laborales": dias_no_laborales,
+        "dias_requieren_revision": dias_requieren_revision,
         "total_minutos_ordinarios": total_minutos_ordinarios,
         "total_horas_ordinarias": round(total_minutos_ordinarios / 60, 1),
         "total_minutos_extra": total_minutos_extra,

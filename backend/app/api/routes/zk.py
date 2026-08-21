@@ -58,8 +58,7 @@ def _get_punch_label(punch) -> str:
 
 def _get_status_label(status) -> str:
     """
-    Etiquetas provisionales para status/verificación.
-    En distintos modelos ZKTeco estos valores pueden variar.
+    Etiquetas provisionales para status
     """
     labels = {
         0: "Desconocido",

@@ -40,11 +40,17 @@ class DashboardUltimaMarcacion(BaseModel):
 class DashboardAsistenciaHoyResumen(BaseModel):
     total: int
     completos: int
+    tolerancias: int
     retardos_menores: int
     retardos_mayores: int
     faltas: int
+    omisiones_entrada: int
+    omisiones_salida: int
+    dias_no_laborales: int
     requieren_revision: int
     puntos_generados: int
+    pct_puntualidad: float
+    pct_asistencia: float
 
 
 class DashboardAlertasResumen(BaseModel):
@@ -60,8 +66,11 @@ class DashboardAsistenciaDiaSerie(BaseModel):
     fecha: str
     total: int
     completos: int
+    tolerancias: int
     retardos: int
     faltas: int
+    omisiones: int
+    dias_no_laborales: int
     requieren_revision: int
 
 

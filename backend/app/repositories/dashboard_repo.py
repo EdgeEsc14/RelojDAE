@@ -10,6 +10,7 @@ from app.core.access_control import AccessScope
 from app.repositories.access_repo import (
     get_allowed_employee_ids,
 )
+from app.repositories.organizacion_repo import DEPARTAMENTO_RESUELTO_CTE
 
 
 def _iso(value: Any) -> str | None:
@@ -20,6 +21,48 @@ def _iso(value: Any) -> str | None:
         return value.isoformat()
 
     return str(value)
+
+
+def _construir_asistencia_hoy(row: dict[str, Any]) -> dict[str, Any]:
+    """
+    Arma el bloque asistencia_hoy con todos los estatus del contrato
+    y un % de puntualidad calculado sobre días laborables (excluye
+    DIA_NO_LABORAL del denominador: un feriado con cero registros de
+    entrada no debe leerse como una caída de puntualidad).
+    """
+    total = row.get("total", 0) or 0
+    completos = row.get("completos", 0) or 0
+    tolerancias = row.get("tolerancias", 0) or 0
+    retardos_menores = row.get("retardos_menores", 0) or 0
+    retardos_mayores = row.get("retardos_mayores", 0) or 0
+    dias_no_laborales = row.get("dias_no_laborales", 0) or 0
+
+    dias_laborables = total - dias_no_laborales
+    dias_asistidos = completos + tolerancias + retardos_menores + retardos_mayores
+
+    return {
+        "total": total,
+        "completos": completos,
+        "tolerancias": tolerancias,
+        "retardos_menores": retardos_menores,
+        "retardos_mayores": retardos_mayores,
+        "faltas": row.get("faltas", 0) or 0,
+        "omisiones_entrada": row.get("omisiones_entrada", 0) or 0,
+        "omisiones_salida": row.get("omisiones_salida", 0) or 0,
+        "dias_no_laborales": dias_no_laborales,
+        "requieren_revision": row.get("requieren_revision", 0) or 0,
+        "puntos_generados": row.get("puntos_generados", 0) or 0,
+        "pct_puntualidad": (
+            round(completos / dias_laborables * 100, 1)
+            if dias_laborables > 0
+            else 0
+        ),
+        "pct_asistencia": (
+            round(dias_asistidos / dias_laborables * 100, 1)
+            if dias_laborables > 0
+            else 0
+        ),
+    }
 
 
 def obtener_dashboard_resumen(
@@ -148,6 +191,10 @@ def obtener_dashboard_resumen(
             ) AS completos,
 
             COUNT(*) FILTER (
+                WHERE ad.estatus = 'TOLERANCIA'
+            ) AS tolerancias,
+
+            COUNT(*) FILTER (
                 WHERE ad.estatus = 'RETARDO_MENOR'
             ) AS retardos_menores,
 
@@ -158,6 +205,18 @@ def obtener_dashboard_resumen(
             COUNT(*) FILTER (
                 WHERE ad.estatus = 'FALTA'
             ) AS faltas,
+
+            COUNT(*) FILTER (
+                WHERE ad.estatus = 'OMISION_ENTRADA'
+            ) AS omisiones_entrada,
+
+            COUNT(*) FILTER (
+                WHERE ad.estatus = 'OMISION_SALIDA'
+            ) AS omisiones_salida,
+
+            COUNT(*) FILTER (
+                WHERE ad.estatus = 'DIA_NO_LABORAL'
+            ) AS dias_no_laborales,
 
             COUNT(*) FILTER (
                 WHERE ad.requiere_revision = TRUE
@@ -311,6 +370,10 @@ def obtener_dashboard_resumen(
             ) AS completos,
 
             COUNT(ad.id) FILTER (
+                WHERE ad.estatus = 'TOLERANCIA'
+            ) AS tolerancias,
+
+            COUNT(ad.id) FILTER (
                 WHERE ad.estatus IN (
                     'RETARDO_MENOR',
                     'RETARDO_MAYOR'
@@ -320,6 +383,17 @@ def obtener_dashboard_resumen(
             COUNT(ad.id) FILTER (
                 WHERE ad.estatus = 'FALTA'
             ) AS faltas,
+
+            COUNT(ad.id) FILTER (
+                WHERE ad.estatus IN (
+                    'OMISION_ENTRADA',
+                    'OMISION_SALIDA'
+                )
+            ) AS omisiones,
+
+            COUNT(ad.id) FILTER (
+                WHERE ad.estatus = 'DIA_NO_LABORAL'
+            ) AS dias_no_laborales,
 
             COUNT(ad.id) FILTER (
                 WHERE ad.requiere_revision = TRUE
@@ -441,14 +515,20 @@ def obtener_dashboard_resumen(
         """
     )
 
+    # "Departamentos con más incidencias" solo debe listar unidades de
+    # tipo DEPARTAMENTO (Contrato de jerarquía organizacional): un
+    # empleado asignado directamente a una Dirección/División/Comité
+    # se agrupa aparte (unidad_organizacional_id NULL), nunca bajo el
+    # nombre de esa unidad superior como si fuera un departamento.
     departamentos_incidencias_query = text(
         f"""
+        {DEPARTAMENTO_RESUELTO_CTE}
         SELECT
-            uo.id AS unidad_organizacional_id,
+            dr.departamento_id AS unidad_organizacional_id,
 
             COALESCE(
-                uo.nombre,
-                'Sin departamento'
+                dr.departamento_nombre,
+                'Sin departamento (unidad de nivel superior)'
             ) AS departamento_nombre,
 
             COUNT(ad.id) FILTER (
@@ -500,8 +580,8 @@ def obtener_dashboard_resumen(
         INNER JOIN personal.empleados e
             ON e.id = ad.empleado_id
 
-        LEFT JOIN organizacion.unidades_organizacionales uo
-            ON uo.id = e.unidad_organizacional_id
+        LEFT JOIN departamento_resuelto dr
+            ON dr.unidad_origen_id = e.unidad_organizacional_id
 
         WHERE ad.fecha >= (
             CURRENT_DATE - INTERVAL '29 days'
@@ -509,8 +589,8 @@ def obtener_dashboard_resumen(
           AND {employee_filter}
 
         GROUP BY
-            uo.id,
-            uo.nombre
+            dr.departamento_id,
+            dr.departamento_nombre
 
         HAVING COUNT(ad.id) FILTER (
             WHERE ad.estatus IN (
@@ -648,22 +728,25 @@ def obtener_dashboard_resumen(
             COUNT(ad.id) FILTER (
                 WHERE ad.estatus = 'FALTA'
             ) AS faltas,
+            -- Denominador = días laborables (excluye DIA_NO_LABORAL):
+            -- un feriado con cero puntuales no debe leerse como una
+            -- caída de puntualidad.
             CASE
-                WHEN COUNT(ad.id) > 0
+                WHEN COUNT(ad.id) FILTER (WHERE ad.estatus <> 'DIA_NO_LABORAL') > 0
                 THEN ROUND(
                     COUNT(ad.id) FILTER (WHERE ad.estatus = 'COMPLETO')::numeric
-                    / COUNT(ad.id) * 100,
+                    / COUNT(ad.id) FILTER (WHERE ad.estatus <> 'DIA_NO_LABORAL') * 100,
                     1
                 )
                 ELSE 0
             END AS pct_puntualidad,
             CASE
-                WHEN COUNT(ad.id) > 0
+                WHEN COUNT(ad.id) FILTER (WHERE ad.estatus <> 'DIA_NO_LABORAL') > 0
                 THEN ROUND(
-                    (COUNT(ad.id) FILTER (WHERE ad.estatus = 'COMPLETO')
+                    (COUNT(ad.id) FILTER (WHERE ad.estatus IN ('COMPLETO', 'TOLERANCIA'))
                      + COUNT(ad.id) FILTER (WHERE ad.estatus IN ('RETARDO_MENOR', 'RETARDO_MAYOR'))
                     )::numeric
-                    / COUNT(ad.id) * 100,
+                    / COUNT(ad.id) FILTER (WHERE ad.estatus <> 'DIA_NO_LABORAL') * 100,
                     1
                 )
                 ELSE 0
@@ -728,30 +811,7 @@ def obtener_dashboard_resumen(
             "activos": dispositivos.get("activos", 0),
             "inactivos": dispositivos.get("inactivos", 0),
         },
-        "asistencia_hoy": {
-            "total": asistencia_hoy.get("total", 0),
-            "completos": asistencia_hoy.get(
-                "completos",
-                0,
-            ),
-            "retardos_menores": asistencia_hoy.get(
-                "retardos_menores",
-                0,
-            ),
-            "retardos_mayores": asistencia_hoy.get(
-                "retardos_mayores",
-                0,
-            ),
-            "faltas": asistencia_hoy.get("faltas", 0),
-            "requieren_revision": asistencia_hoy.get(
-                "requieren_revision",
-                0,
-            ),
-            "puntos_generados": asistencia_hoy.get(
-                "puntos_generados",
-                0,
-            ),
-        },
+        "asistencia_hoy": _construir_asistencia_hoy(asistencia_hoy),
         "ultimas_marcaciones": [
             {
                 "id": row["id"],
@@ -800,8 +860,11 @@ def obtener_dashboard_resumen(
                 "fecha": row["fecha"],
                 "total": row["total"],
                 "completos": row["completos"],
+                "tolerancias": row["tolerancias"],
                 "retardos": row["retardos"],
                 "faltas": row["faltas"],
+                "omisiones": row["omisiones"],
+                "dias_no_laborales": row["dias_no_laborales"],
                 "requieren_revision": (
                     row["requieren_revision"]
                 ),

@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import io
 from datetime import date, datetime, time
-from pathlib import Path
 from typing import Any
 
 from reportlab.lib import colors
@@ -32,6 +31,11 @@ from reportlab.platypus import (
     Spacer,
     Table,
     TableStyle,
+)
+
+from app.services.institucion_config import (
+    obtener_configuracion_institucional,
+    obtener_logo_path,
 )
 
 
@@ -53,15 +57,14 @@ COLOR_TEXT_MUTED = colors.HexColor("#6b7280")
 # Estatus colors
 STATUS_COLORS = {
     "COMPLETO": colors.HexColor("#10b981"),
+    "TOLERANCIA": colors.HexColor("#0ea5e9"),
     "RETARDO_MENOR": colors.HexColor("#f59e0b"),
     "RETARDO_MAYOR": colors.HexColor("#ea580c"),
     "FALTA": colors.HexColor("#ef4444"),
     "OMISION_ENTRADA": colors.HexColor("#8b5cf6"),
     "OMISION_SALIDA": colors.HexColor("#8b5cf6"),
+    "DIA_NO_LABORAL": colors.HexColor("#9ca3af"),
 }
-
-# Branding directory
-BRANDING_DIR = Path(__file__).resolve().parents[2] / "static" / "branding"
 
 
 # ============================================================
@@ -115,21 +118,15 @@ def _format_minutes_as_hours(minutes: int) -> str:
 def _format_status(status: str) -> str:
     mapping = {
         "COMPLETO": "Completo",
+        "TOLERANCIA": "Tolerancia",
         "RETARDO_MENOR": "Ret. menor",
         "RETARDO_MAYOR": "Ret. mayor",
         "FALTA": "Falta",
         "OMISION_ENTRADA": "Om. entrada",
         "OMISION_SALIDA": "Om. salida",
+        "DIA_NO_LABORAL": "No laboral",
     }
     return mapping.get((status or "").upper(), status or "—")
-
-
-def _get_logo_path() -> Path | None:
-    for ext in [".png", ".jpg", ".jpeg"]:
-        path = BRANDING_DIR / f"logo{ext}"
-        if path.exists():
-            return path
-    return None
 
 
 # ============================================================
@@ -177,13 +174,15 @@ def generar_reporte_pdf_empleado(
     empleado = datos["empleado"]
     fecha_inicio = datos["fecha_inicio"]
     fecha_fin = datos["fecha_fin"]
+    config_institucional = obtener_configuracion_institucional()
+    pie_pagina = config_institucional["pie_pagina"]
 
     def _header_footer(canvas, doc_instance):
         """Dibuja header y footer en cada página."""
         canvas.saveState()
 
         # --- Footer ---
-        footer_y = 1.2 * cm
+        footer_y = 1.2 * cm if not pie_pagina else 1.6 * cm
         canvas.setFont("Helvetica", 7)
         canvas.setFillColor(COLOR_TEXT_MUTED)
 
@@ -202,6 +201,13 @@ def generar_reporte_pdf_empleado(
             footer_y,
             f"Página {doc_instance.page}",
         )
+
+        # Pie de página institucional configurado (Configuración >
+        # Datos institucionales), si existe.
+        if pie_pagina:
+            canvas.drawCentredString(
+                page_width / 2, footer_y - 10, pie_pagina
+            )
 
         # Línea separadora footer
         canvas.setStrokeColor(COLOR_BORDER)
@@ -328,24 +334,25 @@ def _build_header(
     fecha_inicio = datos["fecha_inicio"]
     fecha_fin = datos["fecha_fin"]
 
-    logo_path = _get_logo_path()
+    logo_path = obtener_logo_path()
 
-    # Tabla de encabezado: [Logo | Títulos]
-    institution_name = "Instituto Politécnico Nacional"
-    unit_name = "Dirección de Administración Escolar"
-
-    # Intentar cargar config de localStorage... no aplica en backend.
-    # Usamos valores por defecto institucionales.
+    # Configuración institucional real (Configuración > Datos
+    # institucionales). Nunca hardcodear aquí un nombre de institución
+    # real: si no se ha configurado nada, se usan valores neutros.
+    config_institucional = obtener_configuracion_institucional()
+    institution_name = config_institucional["nombre_institucion"]
+    unit_name = config_institucional["nombre_corto"]
 
     title_content = []
     title_content.append(Paragraph(institution_name, ParagraphStyle(
         "InstName", fontName="Helvetica-Bold", fontSize=10,
         textColor=COLOR_PRIMARY, alignment=TA_CENTER, spaceAfter=1 * mm,
     )))
-    title_content.append(Paragraph(unit_name, ParagraphStyle(
-        "UnitName", fontName="Helvetica", fontSize=9,
-        textColor=COLOR_TEXT, alignment=TA_CENTER, spaceAfter=2 * mm,
-    )))
+    if unit_name:
+        title_content.append(Paragraph(unit_name, ParagraphStyle(
+            "UnitName", fontName="Helvetica", fontSize=9,
+            textColor=COLOR_TEXT, alignment=TA_CENTER, spaceAfter=2 * mm,
+        )))
     title_content.append(Paragraph(
         "Reporte de Incidencias por Empleado",
         style_title,
@@ -471,7 +478,7 @@ def _build_daily_table(datos: dict[str, Any]) -> Table:
     header = [
         "Fecha", "Día", "Entrada", "Salida",
         "T. Ordinario", "T. Extra", "Retardo",
-        "Estado", "Incidencia", "Puntos",
+        "Estado", "Incidencia", "Puntos", "Revisión",
     ]
 
     cell_style = ParagraphStyle(
@@ -508,23 +515,25 @@ def _build_daily_table(datos: dict[str, Any]) -> Table:
             Paragraph(_format_status(estatus), cell_style),
             Paragraph(inc_text or "—", cell_style),
             Paragraph(str(int(a.get("puntos_generados") or 0)), cell_style),
+            Paragraph("Sí" if a.get("requiere_revision") else "—", cell_style),
         ]
         table_data.append(row)
 
     if not asistencias:
-        table_data.append([Paragraph("Sin registros de asistencia en este periodo.", cell_style)] + [""] * 9)
+        table_data.append([Paragraph("Sin registros de asistencia en este periodo.", cell_style)] + [""] * 10)
 
     col_widths = [
         2.0 * cm,   # Fecha
         1.2 * cm,   # Día
         1.5 * cm,   # Entrada
         1.5 * cm,   # Salida
-        1.8 * cm,   # T. Ordinario
-        1.5 * cm,   # T. Extra
-        1.4 * cm,   # Retardo
-        2.0 * cm,   # Estado
-        3.0 * cm,   # Incidencia
-        1.2 * cm,   # Puntos
+        1.7 * cm,   # T. Ordinario
+        1.4 * cm,   # T. Extra
+        1.3 * cm,   # Retardo
+        1.8 * cm,   # Estado
+        2.6 * cm,   # Incidencia
+        1.1 * cm,   # Puntos
+        1.4 * cm,   # Revisión
     ]
 
     table = Table(table_data, colWidths=col_widths, repeatRows=1)
@@ -573,10 +582,14 @@ def _build_summary_table(datos: dict[str, Any]) -> Table:
     summary_pairs = [
         ("Total días procesados:", str(resumen.get("total_dias", 0))),
         ("Días completos:", str(resumen.get("dias_completos", 0))),
+        ("Tolerancia:", str(resumen.get("tolerancias", 0))),
         ("Retardos menores:", str(resumen.get("retardos_menores", 0))),
         ("Retardos mayores:", str(resumen.get("retardos_mayores", 0))),
         ("Faltas:", str(resumen.get("faltas", 0))),
-        ("Omisiones:", str(resumen.get("omisiones", 0))),
+        ("Omisiones de entrada:", str(resumen.get("omisiones_entrada", 0))),
+        ("Omisiones de salida:", str(resumen.get("omisiones_salida", 0))),
+        ("Días no laborales:", str(resumen.get("dias_no_laborales", 0))),
+        ("Días que requieren revisión:", str(resumen.get("dias_requieren_revision", 0))),
         ("Total horas ordinarias:", f"{resumen.get('total_horas_ordinarias', 0)} hrs"),
         ("Total horas extra:", f"{resumen.get('total_horas_extra', 0)} hrs"),
         ("Total minutos retardo:", f"{resumen.get('total_minutos_retardo', 0)} min"),

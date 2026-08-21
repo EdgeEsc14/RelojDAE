@@ -19,7 +19,10 @@ BEGIN
 END $$;
 
 -- Limpiar schemas si existen (para re-aplicar)
+DROP SCHEMA IF EXISTS auditoria CASCADE;
 DROP SCHEMA IF EXISTS asistencia CASCADE;
+DROP SCHEMA IF EXISTS seguridad CASCADE;
+DROP SCHEMA IF EXISTS dispositivos CASCADE;
 DROP SCHEMA IF EXISTS personal CASCADE;
 DROP SCHEMA IF EXISTS organizacion CASCADE;
 
@@ -30,6 +33,32 @@ DROP SCHEMA IF EXISTS organizacion CASCADE;
 CREATE SCHEMA personal AUTHORIZATION reloj_app;
 CREATE SCHEMA organizacion AUTHORIZATION reloj_app;
 CREATE SCHEMA asistencia AUTHORIZATION reloj_app;
+CREATE SCHEMA auditoria AUTHORIZATION reloj_app;
+CREATE SCHEMA dispositivos AUTHORIZATION reloj_app;
+
+-- ============================================================
+-- organizacion.tipos_unidad (Dirección/División/Departamento/...)
+-- Migración 010: distingue nivel jerárquico de cada unidad para que
+-- el reporte departamental no mezcle Dirección/División con
+-- Departamento.
+-- ============================================================
+
+CREATE TABLE organizacion.tipos_unidad (
+    id BIGINT GENERATED ALWAYS AS IDENTITY,
+    codigo VARCHAR(30) NOT NULL,
+    nombre VARCHAR(80) NOT NULL,
+    activo BOOLEAN NOT NULL DEFAULT TRUE,
+
+    CONSTRAINT pk_tipos_unidad PRIMARY KEY (id),
+    CONSTRAINT uq_tipos_unidad_codigo UNIQUE (codigo)
+);
+
+INSERT INTO organizacion.tipos_unidad (codigo, nombre) VALUES
+    ('DIRECCION', 'Dirección'),
+    ('DIVISION', 'División'),
+    ('DEPARTAMENTO', 'Departamento'),
+    ('COMITE', 'Comité'),
+    ('ENCARGADURIA', 'Encargaduría');
 
 -- ============================================================
 -- organizacion.unidades_organizacionales (dependencia de empleados)
@@ -39,10 +68,20 @@ CREATE TABLE organizacion.unidades_organizacionales (
     id BIGINT GENERATED ALWAYS AS IDENTITY,
     codigo VARCHAR(60) NOT NULL,
     nombre VARCHAR(200) NOT NULL,
+    unidad_padre_id BIGINT,
+    tipo_unidad_id BIGINT,
     activo BOOLEAN NOT NULL DEFAULT TRUE,
 
     CONSTRAINT pk_unidades_organizacionales PRIMARY KEY (id),
-    CONSTRAINT uq_unidades_organizacionales_codigo UNIQUE (codigo)
+    CONSTRAINT uq_unidades_organizacionales_codigo UNIQUE (codigo),
+    CONSTRAINT fk_unidades_organizacionales_padre
+        FOREIGN KEY (unidad_padre_id)
+        REFERENCES organizacion.unidades_organizacionales (id)
+        ON UPDATE RESTRICT ON DELETE RESTRICT,
+    CONSTRAINT fk_unidades_organizacionales_tipo
+        FOREIGN KEY (tipo_unidad_id)
+        REFERENCES organizacion.tipos_unidad (id)
+        ON UPDATE RESTRICT ON DELETE RESTRICT
 );
 
 -- ============================================================
@@ -123,6 +162,52 @@ CREATE TABLE personal.empleados (
 CREATE UNIQUE INDEX ux_empleados_zk_user_id
 ON personal.empleados (zk_user_id)
 WHERE zk_user_id IS NOT NULL AND btrim(zk_user_id) <> '';
+
+-- ============================================================
+-- dispositivos.dispositivos / dispositivos.empleado_dispositivo
+--
+-- Subconjunto fiel de la migración 024_create_dispositivos.sql,
+-- indispensable para probar la resolución canónica de identidad ZK
+-- (dispositivo_origen + zk_user_id) frente al fallback legacy
+-- personal.empleados.zk_user_id (Contrato §10).
+-- ============================================================
+
+CREATE TABLE dispositivos.dispositivos (
+    id BIGINT GENERATED ALWAYS AS IDENTITY,
+    codigo VARCHAR(40) NOT NULL,
+    nombre VARCHAR(120) NOT NULL,
+    ip INET NOT NULL,
+    puerto INTEGER NOT NULL DEFAULT 4370,
+    activo BOOLEAN NOT NULL DEFAULT TRUE,
+
+    CONSTRAINT pk_dispositivos PRIMARY KEY (id),
+    CONSTRAINT uq_dispositivos_codigo UNIQUE (codigo)
+);
+
+CREATE TABLE dispositivos.empleado_dispositivo (
+    id BIGINT GENERATED ALWAYS AS IDENTITY,
+    empleado_id BIGINT NOT NULL,
+    dispositivo_id BIGINT NOT NULL,
+    zk_uid INTEGER,
+    zk_user_id VARCHAR(50) NOT NULL,
+    nombre_en_dispositivo VARCHAR(150),
+    sincronizado BOOLEAN NOT NULL DEFAULT FALSE,
+    activo BOOLEAN NOT NULL DEFAULT TRUE,
+
+    CONSTRAINT pk_empleado_dispositivo PRIMARY KEY (id),
+    CONSTRAINT fk_empleado_dispositivo_empleado
+        FOREIGN KEY (empleado_id) REFERENCES personal.empleados (id)
+        ON UPDATE RESTRICT ON DELETE RESTRICT,
+    CONSTRAINT fk_empleado_dispositivo_dispositivo
+        FOREIGN KEY (dispositivo_id) REFERENCES dispositivos.dispositivos (id)
+        ON UPDATE RESTRICT ON DELETE RESTRICT,
+    CONSTRAINT ck_empleado_dispositivo_zk_user_id_no_vacio
+        CHECK (BTRIM(zk_user_id) <> '')
+);
+
+CREATE UNIQUE INDEX uq_empleado_dispositivo_zk_user_id_activo
+ON dispositivos.empleado_dispositivo (dispositivo_id, zk_user_id)
+WHERE activo = TRUE;
 
 -- ============================================================
 -- asistencia.tipos_turno
@@ -444,3 +529,507 @@ CREATE TABLE asistencia.asistencias_diarias (
 CREATE INDEX ix_asistencias_empleado ON asistencia.asistencias_diarias (empleado_id);
 CREATE INDEX ix_asistencias_fecha ON asistencia.asistencias_diarias (fecha);
 CREATE INDEX ix_asistencias_estatus ON asistencia.asistencias_diarias (estatus);
+
+-- ============================================================
+-- asistencia.tipos_incidencia / asistencia.incidencias /
+-- asistencia.movimientos_puntos
+--
+-- Subconjunto reducido: listar_asistencia_diaria() y
+-- obtener_resumen_asistencia_empleado() las consultan siempre (LEFT
+-- JOIN / conteo), aunque estén vacías, así que deben existir para las
+-- pruebas HTTP de autorización. Sin datos semilla — solo estructura.
+-- ============================================================
+
+CREATE TABLE asistencia.tipos_incidencia (
+    id BIGINT GENERATED ALWAYS AS IDENTITY,
+    codigo VARCHAR(50) NOT NULL,
+    nombre VARCHAR(120) NOT NULL,
+    categoria VARCHAR(30) NOT NULL,
+
+    CONSTRAINT pk_tipos_incidencia PRIMARY KEY (id),
+    CONSTRAINT uq_tipos_incidencia_codigo UNIQUE (codigo)
+);
+
+CREATE TABLE asistencia.incidencias (
+    id BIGINT GENERATED ALWAYS AS IDENTITY,
+    empleado_id BIGINT NOT NULL,
+    asistencia_diaria_id BIGINT,
+    periodo_evaluacion_id BIGINT,
+    tipo_incidencia_id BIGINT NOT NULL,
+    fecha DATE NOT NULL,
+    descripcion VARCHAR(700),
+    puntos_originales SMALLINT NOT NULL DEFAULT 0,
+    puntos_justificados SMALLINT NOT NULL DEFAULT 0,
+    puntos_efectivos SMALLINT
+        GENERATED ALWAYS AS (
+            GREATEST(puntos_originales - puntos_justificados, 0)
+        ) STORED,
+    estatus VARCHAR(30) NOT NULL DEFAULT 'PENDIENTE',
+    origen VARCHAR(30) NOT NULL DEFAULT 'PROCESAMIENTO',
+    requiere_revision BOOLEAN NOT NULL DEFAULT FALSE,
+
+    CONSTRAINT pk_incidencias PRIMARY KEY (id),
+    CONSTRAINT fk_incidencias_empleado
+        FOREIGN KEY (empleado_id) REFERENCES personal.empleados (id)
+        ON UPDATE RESTRICT ON DELETE RESTRICT,
+    CONSTRAINT fk_incidencias_asistencia
+        FOREIGN KEY (asistencia_diaria_id)
+        REFERENCES asistencia.asistencias_diarias (id)
+        ON UPDATE RESTRICT ON DELETE SET NULL,
+    CONSTRAINT fk_incidencias_periodo
+        FOREIGN KEY (periodo_evaluacion_id)
+        REFERENCES asistencia.periodos_evaluacion (id)
+        ON UPDATE RESTRICT ON DELETE RESTRICT,
+    CONSTRAINT fk_incidencias_tipo
+        FOREIGN KEY (tipo_incidencia_id)
+        REFERENCES asistencia.tipos_incidencia (id)
+        ON UPDATE RESTRICT ON DELETE RESTRICT
+);
+
+CREATE INDEX ix_incidencias_asistencia ON asistencia.incidencias (asistencia_diaria_id);
+
+CREATE TABLE asistencia.movimientos_puntos (
+    id BIGINT GENERATED ALWAYS AS IDENTITY,
+    empleado_id BIGINT NOT NULL,
+    periodo_evaluacion_id BIGINT,
+    fecha DATE NOT NULL,
+    tipo_movimiento VARCHAR(30) NOT NULL,
+    concepto VARCHAR(150) NOT NULL,
+    puntos SMALLINT NOT NULL,
+    descripcion VARCHAR(700),
+    origen VARCHAR(30) NOT NULL DEFAULT 'SISTEMA',
+    fecha_creacion TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT pk_movimientos_puntos PRIMARY KEY (id),
+    CONSTRAINT fk_movimientos_puntos_empleado
+        FOREIGN KEY (empleado_id) REFERENCES personal.empleados (id)
+        ON UPDATE RESTRICT ON DELETE RESTRICT,
+    CONSTRAINT fk_movimientos_puntos_periodo
+        FOREIGN KEY (periodo_evaluacion_id)
+        REFERENCES asistencia.periodos_evaluacion (id)
+        ON UPDATE RESTRICT ON DELETE RESTRICT
+);
+
+-- ============================================================
+-- asistencia.resumen_periodo_empleado
+--
+-- Subconjunto reducido: acumular_puntos_periodo() la actualiza siempre
+-- tras procesar_asistencia_diaria() (POST /asistencia/procesar), aunque
+-- no exista ningún periodo abierto que empate (UPDATE sin filas
+-- afectadas es válido). Solo estructura, sin datos semilla.
+-- ============================================================
+
+CREATE TABLE asistencia.resumen_periodo_empleado (
+    id BIGINT GENERATED ALWAYS AS IDENTITY,
+    empleado_id BIGINT NOT NULL,
+    periodo_evaluacion_id BIGINT NOT NULL,
+    politica_asistencia_id BIGINT,
+    fecha_inicio DATE NOT NULL,
+    fecha_fin DATE NOT NULL,
+    dias_completos SMALLINT NOT NULL DEFAULT 0,
+    retardos_menores SMALLINT NOT NULL DEFAULT 0,
+    retardos_mayores SMALLINT NOT NULL DEFAULT 0,
+    faltas SMALLINT NOT NULL DEFAULT 0,
+    minutos_ordinarios INTEGER NOT NULL DEFAULT 0,
+    minutos_extra INTEGER NOT NULL DEFAULT 0,
+    minutos_retardo INTEGER NOT NULL DEFAULT 0,
+    puntos_brutos SMALLINT NOT NULL DEFAULT 0,
+    descansos_obligatorios_generados SMALLINT NOT NULL DEFAULT 0,
+    faltas_consecutivas_max SMALLINT NOT NULL DEFAULT 0,
+    estatus VARCHAR(30) NOT NULL DEFAULT 'ABIERTO',
+    fecha_calculo TIMESTAMP WITH TIME ZONE,
+    fecha_modificacion TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT pk_resumen_periodo_empleado PRIMARY KEY (id),
+    CONSTRAINT fk_resumen_periodo_empleado_empleado
+        FOREIGN KEY (empleado_id) REFERENCES personal.empleados (id)
+        ON UPDATE RESTRICT ON DELETE RESTRICT,
+    CONSTRAINT fk_resumen_periodo_empleado_periodo
+        FOREIGN KEY (periodo_evaluacion_id)
+        REFERENCES asistencia.periodos_evaluacion (id)
+        ON UPDATE RESTRICT ON DELETE RESTRICT
+);
+
+-- ============================================================
+-- SCHEMA: seguridad
+-- Subconjunto fiel del esquema real (migraciones 012, 013, 015, 017,
+-- 018, 054), reducido a las columnas que usa build_access_scope /
+-- get_current_user / get_allowed_employee_ids para las pruebas HTTP de
+-- autorización (Contrato §16). Tipos, nombres y CHECK de alcance/acciones
+-- reales preservados.
+-- ============================================================
+
+CREATE SCHEMA seguridad AUTHORIZATION reloj_app;
+
+CREATE TABLE seguridad.roles (
+    id BIGINT GENERATED ALWAYS AS IDENTITY,
+    codigo VARCHAR(40) NOT NULL,
+    nombre VARCHAR(80) NOT NULL,
+    descripcion VARCHAR(300),
+    es_sistema BOOLEAN NOT NULL DEFAULT FALSE,
+    orden_visual SMALLINT NOT NULL DEFAULT 0,
+    activo BOOLEAN NOT NULL DEFAULT TRUE,
+
+    CONSTRAINT pk_roles PRIMARY KEY (id),
+    CONSTRAINT uq_roles_codigo UNIQUE (codigo)
+);
+
+CREATE TABLE seguridad.modulos (
+    id BIGINT GENERATED ALWAYS AS IDENTITY,
+    codigo VARCHAR(50) NOT NULL,
+    nombre VARCHAR(100) NOT NULL,
+    activo BOOLEAN NOT NULL DEFAULT TRUE,
+
+    CONSTRAINT pk_modulos PRIMARY KEY (id),
+    CONSTRAINT uq_modulos_codigo UNIQUE (codigo)
+);
+
+CREATE TABLE seguridad.permisos_rol (
+    id BIGINT GENERATED ALWAYS AS IDENTITY,
+    rol_id BIGINT NOT NULL,
+    modulo_id BIGINT NOT NULL,
+
+    alcance_datos VARCHAR(20) NOT NULL DEFAULT 'NINGUNO',
+
+    puede_consultar BOOLEAN NOT NULL DEFAULT FALSE,
+    puede_crear BOOLEAN NOT NULL DEFAULT FALSE,
+    puede_editar BOOLEAN NOT NULL DEFAULT FALSE,
+    puede_eliminar BOOLEAN NOT NULL DEFAULT FALSE,
+    puede_aprobar BOOLEAN NOT NULL DEFAULT FALSE,
+    puede_exportar BOOLEAN NOT NULL DEFAULT FALSE,
+
+    CONSTRAINT pk_permisos_rol PRIMARY KEY (id),
+    CONSTRAINT fk_permisos_rol_rol
+        FOREIGN KEY (rol_id) REFERENCES seguridad.roles (id)
+        ON UPDATE RESTRICT ON DELETE RESTRICT,
+    CONSTRAINT fk_permisos_rol_modulo
+        FOREIGN KEY (modulo_id) REFERENCES seguridad.modulos (id)
+        ON UPDATE RESTRICT ON DELETE RESTRICT,
+    CONSTRAINT uq_permisos_rol_rol_modulo UNIQUE (rol_id, modulo_id),
+
+    CONSTRAINT ck_permisos_rol_alcance CHECK (
+        alcance_datos IN ('TOTAL', 'AREA', 'PROPIO', 'NINGUNO')
+    ),
+    CONSTRAINT ck_permisos_rol_acciones_requieren_consulta CHECK (
+        puede_consultar = TRUE
+        OR (
+            puede_crear = FALSE
+            AND puede_editar = FALSE
+            AND puede_eliminar = FALSE
+            AND puede_aprobar = FALSE
+            AND puede_exportar = FALSE
+        )
+    )
+);
+
+CREATE TABLE seguridad.usuarios (
+    id BIGINT GENERATED ALWAYS AS IDENTITY,
+    empleado_id BIGINT,
+    rol_id BIGINT NOT NULL,
+    rol VARCHAR(50),
+
+    correo VARCHAR(255),
+    correo_electronico VARCHAR(150) NOT NULL,
+    nombre_usuario VARCHAR(100),
+    password_hash TEXT,
+
+    estatus VARCHAR(20) NOT NULL DEFAULT 'ACTIVO',
+    activo BOOLEAN NOT NULL DEFAULT TRUE,
+    correo_verificado BOOLEAN NOT NULL DEFAULT TRUE,
+    requiere_cambio_password BOOLEAN NOT NULL DEFAULT FALSE,
+
+    ultimo_login TIMESTAMP WITHOUT TIME ZONE,
+    ultimo_login_ip INET,
+    ultimo_login_ip_raw VARCHAR(255),
+    ultimo_login_user_agent TEXT,
+
+    fecha_creacion TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW(),
+    fecha_modificacion TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW(),
+
+    CONSTRAINT pk_usuarios PRIMARY KEY (id),
+    CONSTRAINT fk_usuarios_empleado
+        FOREIGN KEY (empleado_id) REFERENCES personal.empleados (id)
+        ON UPDATE RESTRICT ON DELETE RESTRICT,
+    CONSTRAINT fk_usuarios_rol
+        FOREIGN KEY (rol_id) REFERENCES seguridad.roles (id)
+        ON UPDATE RESTRICT ON DELETE RESTRICT,
+    CONSTRAINT ck_usuarios_estatus CHECK (
+        estatus IN (
+            'ACTIVO',
+            'INACTIVO',
+            'PENDIENTE_VERIFICACION',
+            'PENDIENTE_APROBACION',
+            'RECHAZADO',
+            'BLOQUEADO'
+        )
+    )
+);
+
+-- Un empleado no puede tener dos cuentas VIGENTES simultáneas (fiel a
+-- ux_usuarios_empleado_activo, migración 054): cuentas inactivas
+-- históricas no bloquean crear una nueva.
+CREATE UNIQUE INDEX ux_usuarios_empleado_activo
+ON seguridad.usuarios (empleado_id)
+WHERE empleado_id IS NOT NULL
+  AND estatus IN ('ACTIVO', 'PENDIENTE_APROBACION', 'PENDIENTE_VERIFICACION');
+
+CREATE TABLE seguridad.usuarios_unidades (
+    id BIGINT GENERATED ALWAYS AS IDENTITY,
+    usuario_id BIGINT NOT NULL,
+    unidad_organizacional_id BIGINT NOT NULL,
+
+    incluye_descendientes BOOLEAN NOT NULL DEFAULT TRUE,
+    fecha_inicio DATE NOT NULL DEFAULT CURRENT_DATE,
+    fecha_fin DATE,
+    activo BOOLEAN NOT NULL DEFAULT TRUE,
+
+    CONSTRAINT pk_usuarios_unidades PRIMARY KEY (id),
+    CONSTRAINT fk_usuarios_unidades_usuario
+        FOREIGN KEY (usuario_id) REFERENCES seguridad.usuarios (id)
+        ON UPDATE RESTRICT ON DELETE CASCADE,
+    CONSTRAINT fk_usuarios_unidades_unidad
+        FOREIGN KEY (unidad_organizacional_id)
+        REFERENCES organizacion.unidades_organizacionales (id)
+        ON UPDATE RESTRICT ON DELETE RESTRICT,
+    CONSTRAINT ck_usuarios_unidades_fechas CHECK (
+        fecha_fin IS NULL OR fecha_fin >= fecha_inicio
+    )
+);
+
+CREATE INDEX ix_usuarios_unidades_usuario ON seguridad.usuarios_unidades (usuario_id);
+
+-- ============================================================
+-- seguridad.login_auditoria
+--
+-- Subconjunto fiel de la migración 055: POST /auth/login la escribe en
+-- cada intento (éxito o fallo), así que debe existir para probar login
+-- end-to-end.
+-- ============================================================
+
+CREATE TABLE seguridad.login_auditoria (
+    id BIGSERIAL PRIMARY KEY,
+    usuario_id BIGINT,
+    correo_intentado VARCHAR(255),
+    resultado VARCHAR(50) NOT NULL,
+    motivo VARCHAR(100),
+    ip_origen INET,
+    ip_origen_raw VARCHAR(255),
+    forwarded_for TEXT,
+    user_agent TEXT,
+    metodo_http VARCHAR(20),
+    ruta VARCHAR(255),
+    fecha_evento TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW(),
+
+    CONSTRAINT fk_login_auditoria_usuario
+        FOREIGN KEY (usuario_id) REFERENCES seguridad.usuarios (id)
+        ON DELETE SET NULL,
+    CONSTRAINT ck_login_auditoria_resultado CHECK (
+        resultado IN (
+            'EXITOSO',
+            'FALLIDO',
+            'BLOQUEADO',
+            'PENDIENTE_VERIFICACION',
+            'PENDIENTE_APROBACION',
+            'USUARIO_INACTIVO',
+            'ERROR'
+        )
+    )
+);
+
+-- ============================================================
+-- auditoria.bitacora
+--
+-- Subconjunto fiel de la migración 035: trigger genérico de
+-- INSERT/UPDATE/DELETE aplicado a todas las tablas base de
+-- organizacion/personal/asistencia/seguridad/dispositivos, igual que
+-- en producción. Necesario para probar /auditoria end-to-end contra
+-- cambios reales, no simulados.
+-- ============================================================
+
+CREATE TABLE auditoria.bitacora (
+    id BIGINT GENERATED ALWAYS AS IDENTITY,
+    esquema VARCHAR(80) NOT NULL,
+    tabla VARCHAR(120) NOT NULL,
+    operacion VARCHAR(20) NOT NULL,
+    registro_id TEXT,
+    usuario_bd TEXT NOT NULL DEFAULT CURRENT_USER,
+    usuario_app_id BIGINT,
+    usuario_app_correo VARCHAR(320),
+    ip_origen VARCHAR(80),
+    modulo VARCHAR(80),
+    accion_app VARCHAR(150),
+    datos_anteriores JSONB,
+    datos_nuevos JSONB,
+    cambios JSONB,
+    fecha_evento TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT clock_timestamp(),
+
+    CONSTRAINT pk_bitacora PRIMARY KEY (id),
+    CONSTRAINT ck_bitacora_operacion CHECK (operacion IN ('INSERT', 'UPDATE', 'DELETE'))
+);
+
+CREATE INDEX ix_bitacora_fecha_evento ON auditoria.bitacora (fecha_evento);
+CREATE INDEX ix_bitacora_tabla ON auditoria.bitacora (esquema, tabla);
+
+CREATE OR REPLACE FUNCTION auditoria.fn_sanitizar_json(p_registro JSONB)
+RETURNS JSONB
+LANGUAGE SQL
+IMMUTABLE
+AS $$
+    SELECT
+        p_registro
+        - 'password_hash'
+        - 'password_reloj'
+        - 'password_comunicacion'
+        - 'token'
+        - 'access_token'
+        - 'refresh_token';
+$$;
+
+CREATE OR REPLACE FUNCTION auditoria.fn_jsonb_diff(
+    p_anterior JSONB,
+    p_nuevo JSONB
+)
+RETURNS JSONB
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_resultado JSONB := '{}'::JSONB;
+    v_campo TEXT;
+    v_valor_anterior JSONB;
+    v_valor_nuevo JSONB;
+BEGIN
+    FOR v_campo IN
+        SELECT jsonb_object_keys(p_anterior || p_nuevo)
+    LOOP
+        v_valor_anterior := p_anterior -> v_campo;
+        v_valor_nuevo := p_nuevo -> v_campo;
+
+        IF v_valor_anterior IS DISTINCT FROM v_valor_nuevo THEN
+            v_resultado :=
+                v_resultado ||
+                jsonb_build_object(
+                    v_campo,
+                    jsonb_build_object('antes', v_valor_anterior, 'despues', v_valor_nuevo)
+                );
+        END IF;
+    END LOOP;
+
+    RETURN v_resultado;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION auditoria.fn_registrar_bitacora()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_datos_anteriores JSONB;
+    v_datos_nuevos JSONB;
+    v_cambios JSONB;
+    v_registro_id TEXT;
+    v_usuario_app_id_text TEXT;
+    v_usuario_app_id BIGINT;
+    v_usuario_app_correo TEXT;
+    v_ip_origen TEXT;
+    v_modulo TEXT;
+    v_accion_app TEXT;
+BEGIN
+    IF TG_OP = 'INSERT' THEN
+        v_datos_nuevos := auditoria.fn_sanitizar_json(to_jsonb(NEW));
+        v_datos_anteriores := NULL;
+        v_cambios := NULL;
+        v_registro_id := v_datos_nuevos ->> 'id';
+    ELSIF TG_OP = 'UPDATE' THEN
+        v_datos_anteriores := auditoria.fn_sanitizar_json(to_jsonb(OLD));
+        v_datos_nuevos := auditoria.fn_sanitizar_json(to_jsonb(NEW));
+        v_cambios := auditoria.fn_jsonb_diff(v_datos_anteriores, v_datos_nuevos);
+
+        IF v_cambios = '{}'::JSONB THEN
+            RETURN NEW;
+        END IF;
+
+        v_registro_id := COALESCE(v_datos_nuevos ->> 'id', v_datos_anteriores ->> 'id');
+    ELSIF TG_OP = 'DELETE' THEN
+        v_datos_anteriores := auditoria.fn_sanitizar_json(to_jsonb(OLD));
+        v_datos_nuevos := NULL;
+        v_cambios := NULL;
+        v_registro_id := v_datos_anteriores ->> 'id';
+    END IF;
+
+    v_usuario_app_id_text := NULLIF(current_setting('app.usuario_id', TRUE), '');
+
+    BEGIN
+        IF v_usuario_app_id_text IS NOT NULL THEN
+            v_usuario_app_id := v_usuario_app_id_text::BIGINT;
+        END IF;
+    EXCEPTION
+        WHEN OTHERS THEN
+            v_usuario_app_id := NULL;
+    END;
+
+    v_usuario_app_correo := NULLIF(current_setting('app.usuario_correo', TRUE), '');
+    v_ip_origen := NULLIF(current_setting('app.ip_origen', TRUE), '');
+    v_modulo := NULLIF(current_setting('app.modulo', TRUE), '');
+    v_accion_app := NULLIF(current_setting('app.accion', TRUE), '');
+
+    INSERT INTO auditoria.bitacora (
+        esquema, tabla, operacion, registro_id, usuario_bd,
+        usuario_app_id, usuario_app_correo, ip_origen, modulo, accion_app,
+        datos_anteriores, datos_nuevos, cambios, fecha_evento
+    )
+    VALUES (
+        TG_TABLE_SCHEMA, TG_TABLE_NAME, TG_OP, v_registro_id, CURRENT_USER,
+        v_usuario_app_id, v_usuario_app_correo, v_ip_origen, v_modulo, v_accion_app,
+        v_datos_anteriores, v_datos_nuevos, v_cambios, clock_timestamp()
+    );
+
+    IF TG_OP = 'DELETE' THEN
+        RETURN OLD;
+    END IF;
+
+    RETURN NEW;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION auditoria.fn_crear_trigger_auditoria(
+    p_esquema TEXT,
+    p_tabla TEXT
+)
+RETURNS VOID
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_trigger_name TEXT;
+BEGIN
+    v_trigger_name := 'trg_auditoria_' || p_esquema || '_' || p_tabla;
+
+    EXECUTE format('DROP TRIGGER IF EXISTS %I ON %I.%I', v_trigger_name, p_esquema, p_tabla);
+    EXECUTE format(
+        'CREATE TRIGGER %I AFTER INSERT OR UPDATE OR DELETE ON %I.%I
+         FOR EACH ROW EXECUTE FUNCTION auditoria.fn_registrar_bitacora()',
+        v_trigger_name, p_esquema, p_tabla
+    );
+END;
+$$;
+
+DO $$
+DECLARE
+    r RECORD;
+BEGIN
+    FOR r IN
+        SELECT table_schema, table_name
+        FROM information_schema.tables
+        WHERE table_type = 'BASE TABLE'
+          AND table_schema IN ('organizacion', 'personal', 'asistencia', 'seguridad', 'dispositivos')
+        ORDER BY table_schema, table_name
+    LOOP
+        PERFORM auditoria.fn_crear_trigger_auditoria(r.table_schema, r.table_name);
+    END LOOP;
+END $$;
+
+CREATE OR REPLACE VIEW auditoria.vw_bitacora_resumen AS
+SELECT
+    id, fecha_evento, usuario_app_correo, usuario_app_id, usuario_bd,
+    esquema, tabla, esquema || '.' || tabla AS objeto, operacion,
+    registro_id, modulo, accion_app, cambios
+FROM auditoria.bitacora;

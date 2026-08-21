@@ -24,6 +24,7 @@ from app.repositories.usuarios_repo import (
 )
 from app.schemas.usuarios import (
     RolResponse,
+    UsuarioCreadoResponse,
     UsuarioCreateRequest,
     UsuarioListResponse,
     UsuarioResponse,
@@ -136,31 +137,45 @@ def get_usuario(
 
 @router.post(
     "",
-    response_model=UsuarioResponse,
+    response_model=UsuarioCreadoResponse,
     status_code=status.HTTP_201_CREATED,
 )
 def post_crear_usuario(
     payload: UsuarioCreateRequest,
     db: Annotated[Session, Depends(get_db)],
-    _access_scope: Annotated[
+    access_scope: Annotated[
         AccessScope,
         Depends(
             require_module_access("SEGURIDAD", "crear")
         ),
     ],
 ) -> dict:
-    """Crea un nuevo usuario del sistema."""
+    """
+    Crea un nuevo usuario del sistema.
+
+    La contraseña es siempre una temporal generada por el backend
+    (nunca provista por quien llama). Se devuelve en texto plano
+    únicamente en esta respuesta, una sola vez.
+
+    Solo SUPER_ADMIN y RH_ADMIN pueden crear cuentas; RH_ADMIN no puede
+    crear cuentas con rol SUPER_ADMIN.
+    """
 
     try:
         usuario = crear_usuario(
             db,
+            actor_role_codigo=access_scope.role_code,
             correo_electronico=payload.correo_electronico,
-            password=payload.password,
             rol_id=payload.rol_id,
             nombre_usuario=payload.nombre_usuario,
             empleado_id=payload.empleado_id,
             requiere_cambio_password=payload.requiere_cambio_password,
         )
+    except PermissionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -183,19 +198,25 @@ def patch_usuario(
     usuario_id: int,
     payload: UsuarioUpdateRequest,
     db: Annotated[Session, Depends(get_db)],
-    _access_scope: Annotated[
+    access_scope: Annotated[
         AccessScope,
         Depends(
             require_module_access("SEGURIDAD", "editar")
         ),
     ],
 ) -> dict:
-    """Actualiza campos de un usuario existente."""
+    """
+    Actualiza campos de un usuario existente.
+
+    Solo SUPER_ADMIN y RH_ADMIN pueden administrar usuarios; RH_ADMIN no
+    puede modificar una cuenta SUPER_ADMIN ni promover a nadie a ese rol.
+    """
 
     try:
         usuario = actualizar_usuario(
             db,
             usuario_id,
+            actor_role_codigo=access_scope.role_code,
             correo_electronico=payload.correo_electronico,
             rol_id=payload.rol_id,
             nombre_usuario=payload.nombre_usuario,
@@ -204,6 +225,11 @@ def patch_usuario(
             requiere_cambio_password=payload.requiere_cambio_password,
             nueva_password=payload.nueva_password,
         )
+    except PermissionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -231,16 +257,29 @@ def patch_usuario(
 def delete_usuario(
     usuario_id: int,
     db: Annotated[Session, Depends(get_db)],
-    _access_scope: Annotated[
+    access_scope: Annotated[
         AccessScope,
         Depends(
             require_module_access("SEGURIDAD", "eliminar")
         ),
     ],
 ) -> dict:
-    """Desactiva un usuario (no lo elimina de la base de datos)."""
+    """
+    Desactiva un usuario (no lo elimina de la base de datos).
 
-    usuario = desactivar_usuario(db, usuario_id)
+    Solo SUPER_ADMIN y RH_ADMIN pueden desactivar cuentas; RH_ADMIN no
+    puede desactivar una cuenta SUPER_ADMIN.
+    """
+
+    try:
+        usuario = desactivar_usuario(
+            db, usuario_id, actor_role_codigo=access_scope.role_code
+        )
+    except PermissionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
 
     if usuario is None:
         raise HTTPException(

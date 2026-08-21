@@ -12,7 +12,65 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from app.core.security import hash_password
+from app.core.security import generate_random_password, hash_password
+
+
+# ============================================================
+# Reglas de autorización para administración de cuentas
+# (independientes del alcance genérico del módulo SEGURIDAD:
+# TOTAL/AREA/PROPIO/LECTURA no distinguen por rol del actor).
+# ============================================================
+
+ROL_SUPER_ADMIN = "super_admin"
+ROLES_QUE_ADMINISTRAN_USUARIOS = {"super_admin", "rh_admin"}
+
+
+def _normalizar_rol_codigo(value: Any) -> str:
+    return str(value or "").strip().lower()
+
+
+def _validar_permiso_administracion_usuarios(actor_role_codigo: str) -> None:
+    """
+    Solo SUPER_ADMIN y RH_ADMIN pueden crear o administrar cuentas de
+    usuario. SUPERVISOR, EMPLEADO y AUDITOR quedan excluidos aunque el
+    módulo SEGURIDAD les otorgue algún alcance de datos.
+    """
+    if _normalizar_rol_codigo(actor_role_codigo) not in ROLES_QUE_ADMINISTRAN_USUARIOS:
+        raise PermissionError(
+            "Tu rol no tiene permiso para crear o administrar cuentas de usuario."
+        )
+
+
+def _validar_asignacion_rol(actor_role_codigo: str, rol_objetivo_codigo: Any) -> None:
+    """
+    Solo SUPER_ADMIN puede crear o asignar (incluida una promoción
+    posterior) el rol SUPER_ADMIN.
+    """
+    if (
+        _normalizar_rol_codigo(rol_objetivo_codigo) == ROL_SUPER_ADMIN
+        and _normalizar_rol_codigo(actor_role_codigo) != ROL_SUPER_ADMIN
+    ):
+        raise PermissionError(
+            "Solo un SUPER_ADMIN puede crear o asignar el rol SUPER_ADMIN."
+        )
+
+
+def _validar_gestion_usuario_objetivo(
+    actor_role_codigo: str,
+    rol_actual_objetivo_codigo: Any,
+) -> None:
+    """
+    RH_ADMIN no puede administrar (editar, cambiar rol, desactivar) una
+    cuenta cuyo rol ACTUAL sea SUPER_ADMIN. SUPER_ADMIN puede administrar
+    cualquier cuenta.
+    """
+    if _normalizar_rol_codigo(actor_role_codigo) == ROL_SUPER_ADMIN:
+        return
+
+    if _normalizar_rol_codigo(rol_actual_objetivo_codigo) == ROL_SUPER_ADMIN:
+        raise PermissionError(
+            "No tienes permiso para administrar una cuenta SUPER_ADMIN."
+        )
 
 
 # ============================================================
@@ -165,22 +223,33 @@ def obtener_usuario_por_id(
 def crear_usuario(
     db: Session,
     *,
+    actor_role_codigo: str,
     correo_electronico: str,
-    password: str,
     rol_id: int,
     nombre_usuario: str | None = None,
     empleado_id: int | None = None,
     requiere_cambio_password: bool = True,
 ) -> dict[str, Any]:
     """
-    Crea un nuevo usuario del sistema.
+    Crea un nuevo usuario del sistema con una contraseña temporal
+    generada por el backend (nunca provista por el llamador ni derivada
+    de datos del empleado).
 
     Valida:
-    - Rol activo existe
-    - Correo no duplicado
-    - Nombre de usuario no duplicado
-    - Empleado no ya vinculado (si se envía)
+    - El actor (SUPER_ADMIN o RH_ADMIN) tiene permiso para crear cuentas.
+    - Rol activo existe y el actor tiene permiso para asignarlo
+      (solo SUPER_ADMIN puede asignar SUPER_ADMIN).
+    - Correo no duplicado.
+    - Nombre de usuario no duplicado.
+    - Empleado existe, está ACTIVO y no tiene ya una cuenta vigente
+      vinculada (si se envía empleado_id).
+
+    Retorna el usuario creado junto con `password_temporal` en texto
+    plano — únicamente en esta respuesta de creación. No se persiste en
+    ningún lado; solo se guarda su hash.
     """
+
+    _validar_permiso_administracion_usuarios(actor_role_codigo)
 
     # Validar que el rol existe y está activo
     rol = db.execute(
@@ -196,6 +265,8 @@ def crear_usuario(
 
     if rol is None:
         raise ValueError(f"No existe un rol activo con id {rol_id}.")
+
+    _validar_asignacion_rol(actor_role_codigo, rol["codigo"])
 
     # Validar correo único
     correo_normalizado = correo_electronico.strip().lower()
@@ -237,23 +308,27 @@ def crear_usuario(
     if existe_nombre:
         raise ValueError(f"Ya existe un usuario con nombre '{nombre_usuario_normalizado}'.")
 
-    # Validar empleado no vinculado (si se envía)
+    # Validar empleado: existe, está ACTIVO y no vinculado ya (si se envía)
     if empleado_id is not None:
-        # Verificar que el empleado existe
-        empleado_existe = db.execute(
+        empleado = db.execute(
             text(
                 """
-                SELECT EXISTS (
-                    SELECT 1 FROM personal.empleados
-                    WHERE id = :empleado_id
-                )
+                SELECT estatus
+                FROM personal.empleados
+                WHERE id = :empleado_id
                 """
             ),
             {"empleado_id": empleado_id},
-        ).scalar_one()
+        ).mappings().first()
 
-        if not empleado_existe:
+        if empleado is None:
             raise ValueError(f"No existe un empleado con id {empleado_id}.")
+
+        if str(empleado["estatus"] or "").strip().upper() != "ACTIVO":
+            raise ValueError(
+                f"El empleado {empleado_id} no está activo. Solo se pueden "
+                "crear cuentas de acceso para empleados activos."
+            )
 
         # Verificar que no tiene usuario ya
         empleado_con_usuario = db.execute(
@@ -272,8 +347,13 @@ def crear_usuario(
         if empleado_con_usuario:
             raise ValueError("Este empleado ya tiene un usuario activo vinculado.")
 
-    # Hash de password
-    password_hash = hash_password(password)
+    # Contraseña temporal generada por el backend: aleatoria y segura
+    # (secrets.token_urlsafe), sin relación alguna con datos del
+    # empleado (nombre, CURP, código, fecha de nacimiento, correo).
+    # Solo se guarda su hash; el texto plano se retorna una única vez
+    # en la respuesta de esta función.
+    password_temporal = generate_random_password()
+    password_hash = hash_password(password_temporal)
 
     # Rol en texto para columna legacy
     rol_texto = str(rol["codigo"]).lower()
@@ -334,7 +414,11 @@ def crear_usuario(
         db.rollback()
         raise
 
-    return obtener_usuario_por_id(db, usuario_id)
+    usuario_creado = obtener_usuario_por_id(db, usuario_id)
+    return {
+        **usuario_creado,
+        "password_temporal": password_temporal,
+    }
 
 
 # ============================================================
@@ -346,6 +430,7 @@ def actualizar_usuario(
     db: Session,
     usuario_id: int,
     *,
+    actor_role_codigo: str,
     correo_electronico: str | None = None,
     rol_id: int | None = None,
     nombre_usuario: str | None = None,
@@ -357,12 +442,25 @@ def actualizar_usuario(
     """
     Actualiza campos de un usuario existente.
     Solo modifica los campos que se envían (no None).
+
+    Reglas de autorización (independientes del alcance genérico del
+    módulo SEGURIDAD):
+    - Solo SUPER_ADMIN y RH_ADMIN pueden administrar usuarios.
+    - RH_ADMIN no puede administrar (ningún campo) una cuenta cuyo rol
+      ACTUAL sea SUPER_ADMIN.
+    - RH_ADMIN no puede asignar/promover a nadie al rol SUPER_ADMIN.
     """
+
+    _validar_permiso_administracion_usuarios(actor_role_codigo)
 
     # Verificar que el usuario existe
     usuario_actual = obtener_usuario_por_id(db, usuario_id)
     if usuario_actual is None:
         return None
+
+    _validar_gestion_usuario_objetivo(
+        actor_role_codigo, usuario_actual["rol_codigo"]
+    )
 
     sets: list[str] = []
     params: dict[str, Any] = {"usuario_id": usuario_id}
@@ -402,6 +500,8 @@ def actualizar_usuario(
 
         if rol is None:
             raise ValueError(f"No existe un rol activo con id {rol_id}.")
+
+        _validar_asignacion_rol(actor_role_codigo, rol["codigo"])
 
         sets.append("rol_id = :rol_id")
         sets.append("rol = :rol_texto")
@@ -512,12 +612,23 @@ def actualizar_usuario(
 def desactivar_usuario(
     db: Session,
     usuario_id: int,
+    *,
+    actor_role_codigo: str,
 ) -> dict[str, Any] | None:
-    """Desactiva un usuario (no lo elimina)."""
+    """
+    Desactiva un usuario (no lo elimina).
+
+    Solo SUPER_ADMIN y RH_ADMIN pueden desactivar cuentas, y RH_ADMIN no
+    puede desactivar una cuenta SUPER_ADMIN.
+    """
+
+    _validar_permiso_administracion_usuarios(actor_role_codigo)
 
     usuario = obtener_usuario_por_id(db, usuario_id)
     if usuario is None:
         return None
+
+    _validar_gestion_usuario_objetivo(actor_role_codigo, usuario["rol_codigo"])
 
     try:
         db.execute(

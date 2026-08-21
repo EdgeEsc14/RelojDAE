@@ -195,13 +195,32 @@ def post_procesar_asistencia(
         fecha_fin=payload.fecha_fin,
     )
 
-    # Después de procesar asistencia, acumular puntos y detectar condiciones
-    resultado_acumulacion = acumular_puntos_periodo(
-        db=db,
-        fecha_inicio=payload.fecha_inicio,
-        fecha_fin=payload.fecha_fin,
-    )
-
-    resultado_procesamiento["acumulacion_puntos"] = resultado_acumulacion
+    # Después de procesar asistencia (ya confirmada en BD por fecha,
+    # ver Contrato §14), se intenta acumular puntos y detectar
+    # condiciones disciplinarias. Esto se aísla deliberadamente: un
+    # problema de configuración de periodos de evaluación (o cualquier
+    # otro fallo aquí) nunca debe convertir un procesamiento de
+    # asistencia exitoso en una respuesta 500 — se reporta en el
+    # resultado en vez de propagarse.
+    try:
+        resultado_procesamiento["acumulacion_puntos"] = acumular_puntos_periodo(
+            db=db,
+            fecha_inicio=payload.fecha_inicio,
+            fecha_fin=payload.fecha_fin,
+        )
+    except Exception as exc:
+        db.rollback()
+        resultado_procesamiento["acumulacion_puntos"] = {
+            "fecha_inicio": payload.fecha_inicio.isoformat(),
+            "fecha_fin": payload.fecha_fin.isoformat(),
+            "movimientos_puntos_insertados": 0,
+            "dos_generados": [],
+            "alertas_faltas_consecutivas": [],
+            "resumenes_actualizados": 0,
+            "periodos_no_resueltos": [],
+            "error": (
+                f"No fue posible acumular puntos: {type(exc).__name__}: {exc}"
+            ),
+        }
 
     return resultado_procesamiento
