@@ -1012,6 +1012,98 @@ BEGIN
 END;
 $$;
 
+-- ============================================================
+-- asistencia.descansos_obligatorios
+--
+-- Fiel a migraciones/034_create_descansos_y_sincronizaciones.sql.
+-- acumular_puntos_periodo() escribe aquí los DO reales (Contrato: 10
+-- puntos acumulados en el periodo -> 1 DO). No usar
+-- asistencia.movimientos_puntos para esto: esa tabla exige puntos != 0
+-- (y puntos > 0 para tipo_movimiento='CARGO'), y un DO no es un cargo
+-- de puntos. Se define aquí (tras seguridad.usuarios) porque tiene FKs
+-- hacia ese esquema.
+-- ============================================================
+
+CREATE TABLE asistencia.descansos_obligatorios (
+    id BIGINT GENERATED ALWAYS AS IDENTITY,
+    empleado_id BIGINT NOT NULL,
+    periodo_evaluacion_id BIGINT NOT NULL,
+    resumen_periodo_empleado_id BIGINT,
+    incidencia_id BIGINT,
+    numero_descanso_periodo SMALLINT NOT NULL DEFAULT 1,
+    numero_descanso_historico INTEGER,
+    puntos_efectivos_periodo SMALLINT NOT NULL,
+    fecha_generacion TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    fecha_programada DATE,
+    fecha_aplicacion DATE,
+    estatus VARCHAR(30) NOT NULL DEFAULT 'PENDIENTE',
+    requiere_revision_baja BOOLEAN NOT NULL DEFAULT FALSE,
+    motivo_revision_baja VARCHAR(700),
+    generado_por_usuario_id BIGINT,
+    programado_por_usuario_id BIGINT,
+    aplicado_por_usuario_id BIGINT,
+    cancelado_por_usuario_id BIGINT,
+    fecha_cancelacion TIMESTAMP WITH TIME ZONE,
+    motivo_cancelacion VARCHAR(700),
+    observaciones VARCHAR(1000),
+    fecha_creacion TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    fecha_modificacion TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT pk_descansos_obligatorios PRIMARY KEY (id),
+    CONSTRAINT fk_descansos_empleado
+        FOREIGN KEY (empleado_id) REFERENCES personal.empleados (id)
+        ON UPDATE RESTRICT ON DELETE RESTRICT,
+    CONSTRAINT fk_descansos_periodo
+        FOREIGN KEY (periodo_evaluacion_id)
+        REFERENCES asistencia.periodos_evaluacion (id)
+        ON UPDATE RESTRICT ON DELETE RESTRICT,
+    CONSTRAINT fk_descansos_resumen
+        FOREIGN KEY (resumen_periodo_empleado_id)
+        REFERENCES asistencia.resumen_periodo_empleado (id)
+        ON UPDATE RESTRICT ON DELETE SET NULL,
+    CONSTRAINT fk_descansos_incidencia
+        FOREIGN KEY (incidencia_id) REFERENCES asistencia.incidencias (id)
+        ON UPDATE RESTRICT ON DELETE SET NULL,
+    CONSTRAINT fk_descansos_generado_por
+        FOREIGN KEY (generado_por_usuario_id) REFERENCES seguridad.usuarios (id)
+        ON UPDATE RESTRICT ON DELETE SET NULL,
+    CONSTRAINT fk_descansos_programado_por
+        FOREIGN KEY (programado_por_usuario_id) REFERENCES seguridad.usuarios (id)
+        ON UPDATE RESTRICT ON DELETE SET NULL,
+    CONSTRAINT fk_descansos_aplicado_por
+        FOREIGN KEY (aplicado_por_usuario_id) REFERENCES seguridad.usuarios (id)
+        ON UPDATE RESTRICT ON DELETE SET NULL,
+    CONSTRAINT fk_descansos_cancelado_por
+        FOREIGN KEY (cancelado_por_usuario_id) REFERENCES seguridad.usuarios (id)
+        ON UPDATE RESTRICT ON DELETE SET NULL,
+    CONSTRAINT uq_descansos_empleado_periodo_numero
+        UNIQUE (empleado_id, periodo_evaluacion_id, numero_descanso_periodo),
+    CONSTRAINT ck_descansos_numero_periodo CHECK (numero_descanso_periodo > 0),
+    CONSTRAINT ck_descansos_numero_historico
+        CHECK (numero_descanso_historico IS NULL OR numero_descanso_historico > 0),
+    CONSTRAINT ck_descansos_puntos CHECK (puntos_efectivos_periodo >= 0),
+    CONSTRAINT ck_descansos_estatus
+        CHECK (estatus IN ('PENDIENTE', 'PROGRAMADO', 'APLICADO', 'CANCELADO')),
+    CONSTRAINT ck_descansos_programado
+        CHECK ((estatus = 'PROGRAMADO' AND fecha_programada IS NOT NULL) OR (estatus <> 'PROGRAMADO')),
+    CONSTRAINT ck_descansos_aplicado
+        CHECK ((estatus = 'APLICADO' AND fecha_aplicacion IS NOT NULL) OR (estatus <> 'APLICADO')),
+    CONSTRAINT ck_descansos_cancelado
+        CHECK (
+            (estatus = 'CANCELADO' AND fecha_cancelacion IS NOT NULL
+                AND motivo_cancelacion IS NOT NULL AND BTRIM(motivo_cancelacion) <> '')
+            OR (estatus <> 'CANCELADO')
+        ),
+    CONSTRAINT ck_descansos_fecha_aplicacion
+        CHECK (fecha_aplicacion IS NULL OR fecha_programada IS NULL OR fecha_aplicacion >= fecha_programada),
+    CONSTRAINT ck_descansos_motivo_revision_no_vacio
+        CHECK (motivo_revision_baja IS NULL OR BTRIM(motivo_revision_baja) <> ''),
+    CONSTRAINT ck_descansos_motivo_cancelacion_no_vacio
+        CHECK (motivo_cancelacion IS NULL OR BTRIM(motivo_cancelacion) <> ''),
+    CONSTRAINT ck_descansos_observaciones_no_vacias
+        CHECK (observaciones IS NULL OR BTRIM(observaciones) <> '')
+);
+
 DO $$
 DECLARE
     r RECORD;

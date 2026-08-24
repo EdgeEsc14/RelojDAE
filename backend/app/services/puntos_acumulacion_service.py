@@ -238,6 +238,17 @@ def _generar_dos_por_acumulacion(
     (periodo_id, ya resuelto de forma única por el llamador). Si sí,
     registra el DO correspondiente.
 
+    Los DO se registran en asistencia.descansos_obligatorios —tabla
+    dedicada con su propio ciclo de vida (estatus, fecha_programada,
+    fecha_aplicacion)—, no como una fila más de
+    asistencia.movimientos_puntos: un DO no es un cargo de puntos, y
+    esa tabla exige puntos != 0 (CHECK ck_movimientos_puntos_no_cero) y,
+    para tipo_movimiento='CARGO', puntos > 0
+    (ck_movimientos_puntos_signo). Insertar el marcador ahí con
+    puntos=0 viola ambos constraints de forma incondicional, por lo que
+    nunca podía generarse un DO real (bug preexistente, no una
+    decisión de diseño).
+
     Retorna lista de DOs generados.
     """
 
@@ -269,10 +280,7 @@ def _generar_dos_por_acumulacion(
                              WHEN mp.tipo_movimiento = 'AJUSTE' THEN mp.puntos
                              ELSE 0
                         END
-                    ), 0) AS puntos_acumulados,
-                    COUNT(*) FILTER (
-                        WHERE mp.concepto = 'Día de Omisión (DO)'
-                    ) AS dos_existentes
+                    ), 0) AS puntos_acumulados
                 FROM asistencia.movimientos_puntos mp
                 WHERE mp.empleado_id = :empleado_id
                   AND mp.periodo_evaluacion_id = :periodo_id
@@ -285,7 +293,20 @@ def _generar_dos_por_acumulacion(
             continue
 
         puntos_acumulados = int(row["puntos_acumulados"])
-        dos_existentes = int(row["dos_existentes"])
+
+        dos_existentes = int(
+            db.execute(
+                text(
+                    """
+                    SELECT COUNT(*)
+                    FROM asistencia.descansos_obligatorios
+                    WHERE empleado_id = :empleado_id
+                      AND periodo_evaluacion_id = :periodo_id
+                    """
+                ),
+                {"empleado_id": empleado_id, "periodo_id": periodo_id},
+            ).scalar_one()
+        )
 
         # Cuántos DOs deberían existir según los puntos
         dos_esperados = puntos_acumulados // PUNTOS_POR_DO
@@ -293,38 +314,58 @@ def _generar_dos_por_acumulacion(
         # Si faltan DOs por generar
         dos_faltantes = dos_esperados - dos_existentes
 
-        for _ in range(dos_faltantes):
+        if dos_faltantes <= 0:
+            continue
+
+        numero_historico = int(
             db.execute(
                 text(
                     """
-                    INSERT INTO asistencia.movimientos_puntos (
+                    SELECT COUNT(*)
+                    FROM asistencia.descansos_obligatorios
+                    WHERE empleado_id = :empleado_id
+                    """
+                ),
+                {"empleado_id": empleado_id},
+            ).scalar_one()
+        )
+
+        for indice in range(dos_faltantes):
+            numero_periodo = dos_existentes + indice + 1
+            numero_historico += 1
+
+            db.execute(
+                text(
+                    """
+                    INSERT INTO asistencia.descansos_obligatorios (
                         empleado_id,
                         periodo_evaluacion_id,
-                        fecha,
-                        tipo_movimiento,
-                        concepto,
-                        puntos,
-                        descripcion,
-                        origen
+                        numero_descanso_periodo,
+                        numero_descanso_historico,
+                        puntos_efectivos_periodo,
+                        estatus,
+                        observaciones
                     )
                     VALUES (
                         :empleado_id,
                         :periodo_id,
-                        :fecha,
-                        'CARGO',
-                        'Día de Omisión (DO)',
-                        0,
-                        :descripcion,
-                        'SISTEMA'
+                        :numero_periodo,
+                        :numero_historico,
+                        :puntos_efectivos,
+                        'PENDIENTE',
+                        :observaciones
                     )
                     """
                 ),
                 {
                     "empleado_id": empleado_id,
                     "periodo_id": periodo_id,
-                    "fecha": fecha_fin,
-                    "descripcion": (
-                        f"DO generado por acumulación de {PUNTOS_POR_DO} puntos. "
+                    "numero_periodo": numero_periodo,
+                    "numero_historico": numero_historico,
+                    "puntos_efectivos": puntos_acumulados,
+                    "observaciones": (
+                        f"DO generado automáticamente por acumulación de "
+                        f"{PUNTOS_POR_DO} puntos en el periodo. "
                         f"Puntos acumulados: {puntos_acumulados}."
                     ),
                 },
@@ -333,11 +374,11 @@ def _generar_dos_por_acumulacion(
             dos_generados.append({
                 "empleado_id": empleado_id,
                 "puntos_acumulados": puntos_acumulados,
-                "do_numero": dos_existentes + 1,
+                "do_numero": numero_periodo,
             })
 
             # Verificar si se alcanzaron 7 DOs → condición de baja
-            total_dos = dos_existentes + dos_faltantes
+            total_dos = dos_existentes + indice + 1
             if total_dos >= DOS_PARA_REVISION_BAJA:
                 _marcar_revision_baja(
                     db,
@@ -537,10 +578,9 @@ def _actualizar_resumenes_periodo(
                     -- DOs generados
                     (
                         SELECT COUNT(*)
-                        FROM asistencia.movimientos_puntos mp
-                        WHERE mp.empleado_id = ad.empleado_id
-                          AND mp.concepto = 'Día de Omisión (DO)'
-                          AND mp.fecha BETWEEN :fecha_inicio AND :fecha_fin
+                        FROM asistencia.descansos_obligatorios do_
+                        WHERE do_.empleado_id = ad.empleado_id
+                          AND do_.fecha_generacion::date BETWEEN :fecha_inicio AND :fecha_fin
                     ) AS dos_generados
                 FROM asistencia.asistencias_diarias ad
                 WHERE ad.fecha BETWEEN :fecha_inicio AND :fecha_fin

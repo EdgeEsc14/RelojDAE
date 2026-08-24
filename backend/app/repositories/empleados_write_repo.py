@@ -6,6 +6,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.schemas.empleados_write import EmpleadoCreate, EmpleadoUpdate
+from app.services.institucion_config import obtener_configuracion_institucional
 
 
 ESTATUS_EMPLEADO_PERMITIDOS = {
@@ -67,7 +68,14 @@ def crear_empleado(
         if not payload.generar_codigo:
             raise ValueError("Debe enviar codigo_empleado o activar generar_codigo.")
 
-        codigo_empleado = generar_siguiente_codigo_empleado(db=db)["codigo_empleado"]
+        prefijo_efectivo = payload.prefijo or obtener_configuracion_institucional()[
+            "prefijo_codigo_empleado"
+        ]
+
+        codigo_empleado = generar_siguiente_codigo_empleado(
+            db=db,
+            prefijo=prefijo_efectivo,
+        )["codigo_empleado"]
 
     estatus = _normalizar_estatus(data["estatus"])
 

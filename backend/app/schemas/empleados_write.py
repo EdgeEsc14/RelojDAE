@@ -17,6 +17,15 @@ class EmpleadoCreate(BaseModel):
         description="Código manual. Si no se envía, se genera automáticamente.",
     )
     generar_codigo: bool = True
+    prefijo: str | None = Field(
+        default=None,
+        max_length=10,
+        description=(
+            "Prefijo para generar codigo_empleado cuando generar_codigo "
+            "es true. Si no se envía, usa el prefijo configurado en "
+            "Configuración institucional."
+        ),
+    )
 
     nombres: str = Field(min_length=1, max_length=120)
     apellido_paterno: str = Field(min_length=1, max_length=80)

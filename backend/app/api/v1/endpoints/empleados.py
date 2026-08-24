@@ -49,6 +49,7 @@ from app.schemas.empleados_sincronizacion import (
 from app.services.empleados_sincronizacion_service import (
     sincronizar_empleado_relojes,
 )
+from app.services.institucion_config import obtener_configuracion_institucional
 
 router = APIRouter(
     prefix="/empleados",
@@ -266,14 +267,15 @@ def get_siguiente_codigo_empleado(
         ),
     ],
     prefijo: Annotated[
-        str,
+        str | None,
         Query(min_length=2, max_length=10),
-    ] = "DAE",
+    ] = None,
 ) -> dict:
     try:
         return generar_siguiente_codigo_empleado(
             db=db,
-            prefijo=prefijo,
+            prefijo=prefijo
+            or obtener_configuracion_institucional()["prefijo_codigo_empleado"],
         )
     except ValueError as exc:
         raise HTTPException(

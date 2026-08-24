@@ -16,6 +16,7 @@ Datos institucionales en Configuración.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +28,10 @@ DEFAULTS: dict[str, str] = {
     "nombre_institucion": "Institución",
     "nombre_corto": "",
     "pie_pagina": "",
+    # Prefijo neutro: no asumir "EMP" como identidad institucional real,
+    # solo el valor histórico usado mientras nadie configuró uno propio
+    # en Configuración.
+    "prefijo_codigo_empleado": "EMP",
 }
 
 
@@ -53,6 +58,10 @@ def obtener_configuracion_institucional() -> dict[str, str]:
             data.get("nombre_corto") or DEFAULTS["nombre_corto"]
         ),
         "pie_pagina": str(data.get("pie_pagina") or ""),
+        "prefijo_codigo_empleado": str(
+            data.get("prefijo_codigo_empleado")
+            or DEFAULTS["prefijo_codigo_empleado"]
+        ).upper(),
     }
 
 
@@ -61,20 +70,31 @@ def guardar_configuracion_institucional(
     nombre_institucion: str,
     nombre_corto: str,
     pie_pagina: str | None,
+    prefijo_codigo_empleado: str | None = None,
 ) -> dict[str, str]:
     """Persiste la configuración institucional en config.json."""
 
     nombre_institucion = nombre_institucion.strip()
     nombre_corto = nombre_corto.strip()
     pie_pagina_limpio = (pie_pagina or "").strip()
+    prefijo_limpio = (
+        prefijo_codigo_empleado or DEFAULTS["prefijo_codigo_empleado"]
+    ).strip().upper()
 
     if not nombre_institucion:
         raise ValueError("El nombre de la institución no puede estar vacío.")
+
+    if not re.fullmatch(r"[A-Z0-9]{2,10}", prefijo_limpio):
+        raise ValueError(
+            "El prefijo de código de empleado debe tener entre 2 y 10 "
+            "caracteres alfanuméricos."
+        )
 
     config: dict[str, str] = {
         "nombre_institucion": nombre_institucion,
         "nombre_corto": nombre_corto,
         "pie_pagina": pie_pagina_limpio,
+        "prefijo_codigo_empleado": prefijo_limpio,
     }
 
     BRANDING_DIR.mkdir(parents=True, exist_ok=True)

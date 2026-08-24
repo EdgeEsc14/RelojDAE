@@ -232,6 +232,32 @@ def _safe_text(value) -> str:
     return text
 
 
+def _ajustar_texto_a_celda(pdf, texto: str, ancho_mm: float, margen_mm: float = 2.0) -> str:
+    """
+    Recorta `texto` para que quepa en una celda de `ancho_mm`, midiendo el
+    ancho real de render con la fuente/tamaño ya activos en `pdf`
+    (pdf.get_string_width), no una cantidad fija de caracteres.
+
+    Un corte por caracteres (ej. texto[:26]) no garantiza que el texto
+    quepa: con fuentes proporcionales, la misma cantidad de caracteres
+    ocupa distinto ancho según qué letras sean (una "M" o "W" pesa mucho
+    más que una "i"), lo que hacía que nombres/departamentos largos se
+    salieran de su celda y se encimaran con la columna siguiente.
+    """
+    disponible = ancho_mm - margen_mm
+
+    if pdf.get_string_width(texto) <= disponible:
+        return texto
+
+    sufijo = "..."
+    recortado = texto
+
+    while recortado and pdf.get_string_width(recortado + sufijo) > disponible:
+        recortado = recortado[:-1]
+
+    return (recortado + sufijo) if recortado else texto[:1]
+
+
 def _draw_encabezado_institucional(pdf, titulo: str) -> None:
     """
     Encabezado institucional compartido por los PDF generados con fpdf.
@@ -309,7 +335,7 @@ def generar_pdf_reporte_departamental(data: dict[str, Any]) -> bytes:
         "Faltas", "Om.Ent", "Om.Sal", "No lab.", "Revisar", "Puntos",
         "Hrs Ord.", "Hrs Extra",
     ]
-    col_widths = [38, 12, 18, 15, 15, 15, 15, 15, 15, 15, 15, 15, 18, 18]
+    col_widths = [65, 10, 16, 13, 13, 13, 13, 13, 13, 13, 13, 13, 16, 16]
 
     pdf.set_font("Helvetica", "B", 7)
     for i, header in enumerate(headers):
@@ -318,9 +344,10 @@ def generar_pdf_reporte_departamental(data: dict[str, Any]) -> bytes:
 
     pdf.set_font("Helvetica", "", 7)
     for dept in data["departamentos"]:
-        nombre = _safe_text(
-            (dept["unidad_nombre"] or "Sin departamento (nivel superior)")
-        )[:26]
+        nombre_completo = _safe_text(
+            dept["unidad_nombre"] or "Sin departamento (nivel superior)"
+        )
+        nombre = _ajustar_texto_a_celda(pdf, nombre_completo, col_widths[0])
         pdf.cell(col_widths[0], 5, nombre, border=1)
         pdf.cell(col_widths[1], 5, str(dept["total_empleados"]), border=1, align="C")
         pdf.cell(col_widths[2], 5, str(dept["dias_completos"]), border=1, align="C")
@@ -349,7 +376,7 @@ def generar_pdf_reporte_departamental(data: dict[str, Any]) -> bytes:
             "Codigo", "Nombre", "Departamento", "Completos",
             "Ret.Men", "Ret.May", "Faltas", "Revisar", "Puntos",
         ]
-        emp_col_widths = [20, 45, 38, 20, 18, 18, 15, 15, 15]
+        emp_col_widths = [22, 60, 52, 16, 15, 15, 13, 13, 13]
 
         pdf.set_font("Helvetica", "B", 7)
         for i, header in enumerate(emp_headers):
@@ -358,13 +385,18 @@ def generar_pdf_reporte_departamental(data: dict[str, Any]) -> bytes:
 
         pdf.set_font("Helvetica", "", 7)
         for emp in detalle_empleados:
-            pdf.cell(emp_col_widths[0], 5, _safe_text(emp["codigo_empleado"]), border=1)
-            pdf.cell(emp_col_widths[1], 5, _safe_text(emp["nombre_completo"])[:26], border=1)
-            pdf.cell(
-                emp_col_widths[2], 5,
-                _safe_text(emp["unidad_nombre"] or "Sin departamento")[:22],
-                border=1,
+            codigo = _ajustar_texto_a_celda(pdf, _safe_text(emp["codigo_empleado"]), emp_col_widths[0])
+            pdf.cell(emp_col_widths[0], 5, codigo, border=1)
+
+            nombre = _ajustar_texto_a_celda(pdf, _safe_text(emp["nombre_completo"]), emp_col_widths[1])
+            pdf.cell(emp_col_widths[1], 5, nombre, border=1)
+
+            depto_emp = _ajustar_texto_a_celda(
+                pdf,
+                _safe_text(emp["unidad_nombre"] or "Sin departamento"),
+                emp_col_widths[2],
             )
+            pdf.cell(emp_col_widths[2], 5, depto_emp, border=1)
             pdf.cell(emp_col_widths[3], 5, str(emp["dias_completos"]), border=1, align="C")
             pdf.cell(emp_col_widths[4], 5, str(emp["retardos_menores"]), border=1, align="C")
             pdf.cell(emp_col_widths[5], 5, str(emp["retardos_mayores"]), border=1, align="C")
@@ -375,7 +407,10 @@ def generar_pdf_reporte_departamental(data: dict[str, Any]) -> bytes:
 
     _draw_pie_pagina(pdf)
 
-    return pdf.output()
+    # fpdf2 devuelve bytearray; starlette.Response solo acepta bytes/str
+    # (su render() hace content.encode(...) si no es bytes, y bytearray
+    # no tiene .encode -> AttributeError 500 en cada descarga).
+    return bytes(pdf.output())
 
 
 # ============================================================

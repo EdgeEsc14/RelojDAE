@@ -528,7 +528,7 @@ def obtener_dashboard_resumen(
 
             COALESCE(
                 dr.departamento_nombre,
-                'Sin departamento (unidad de nivel superior)'
+                'Sin departamento'
             ) AS departamento_nombre,
 
             COUNT(ad.id) FILTER (

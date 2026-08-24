@@ -247,6 +247,7 @@ def put_configuracion_institucional(
             nombre_institucion=payload.nombre_institucion,
             nombre_corto=payload.nombre_corto,
             pie_pagina=payload.pie_pagina,
+            prefijo_codigo_empleado=payload.prefijo_codigo_empleado,
         )
     except ValueError as exc:
         raise HTTPException(

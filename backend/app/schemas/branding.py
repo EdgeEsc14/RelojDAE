@@ -9,9 +9,11 @@ class ConfiguracionInstitucionalResponse(BaseModel):
     nombre_institucion: str
     nombre_corto: str
     pie_pagina: str
+    prefijo_codigo_empleado: str
 
 
 class ConfiguracionInstitucionalUpdate(BaseModel):
     nombre_institucion: str = Field(..., min_length=1, max_length=200)
     nombre_corto: str = Field(default="", max_length=200)
     pie_pagina: str = Field(default="", max_length=500)
+    prefijo_codigo_empleado: str = Field(default="EMP", min_length=2, max_length=10)
