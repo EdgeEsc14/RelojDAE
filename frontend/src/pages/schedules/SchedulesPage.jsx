@@ -411,12 +411,13 @@ function SchedulesPage() {
           </div>
 
           <div>
-            <span className="metric-label">Tolerancia promedio</span>
+            <span className="metric-label">Tolerancia configurada (horarios)</span>
             <strong className="metric-value">
               {Math.round(averageTolerance)} min
             </strong>
             <p className="metric-helper">
-              Entrada permitida antes de retardo
+              Valor informativo por horario. No clasifica retardos: la
+              regla oficial de asistencia está en Configuración.
             </p>
           </div>
         </article>

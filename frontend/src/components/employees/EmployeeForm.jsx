@@ -21,6 +21,7 @@ import { empleadosApi } from "../../api/empleadosApi";
 import { catalogosApi } from "../../api/catalogosApi";
 import { horariosApi } from "../../api/horariosApi";
 import { getRoles } from "../../api/usuariosApi";
+import { brandingApi } from "../../api/brandingApi";
 import {
   getScheduleDescription,
 } from "../../data/mockCatalogs";
@@ -45,14 +46,16 @@ const INITIAL_SCHEDULE_FORM = {
 };
 
 
-function getNextEmployeeCode(employees) {
+function getNextEmployeeCode(employees, prefix = "EMP") {
+  const pattern = new RegExp(`^${prefix}-(\\d+)$`);
+
   const highestNumber = employees.reduce((maximum, employee) => {
     const code =
       employee.employeeCode ??
       employee.codigo_empleado ??
       "";
 
-    const match = code.match(/^EMP-(\d+)$/);
+    const match = code.match(pattern);
 
     if (!match) {
       return maximum;
@@ -61,7 +64,7 @@ function getNextEmployeeCode(employees) {
     return Math.max(maximum, Number(match[1]));
   }, 0);
 
-  return `EMP-${String(highestNumber + 1).padStart(4, "0")}`;
+  return `${prefix}-${String(highestNumber + 1).padStart(4, "0")}`;
 }
 
 function getNextAvailableZkUserId(employees) {
@@ -423,7 +426,7 @@ function getEmployeeNameParts(employee) {
   };
 }
 
-function validateEmployee(form, editingEmployeeId = null) {
+function validateEmployee(form, editingEmployeeId = null, employeeCodePrefix = "EMP") {
   const errors = {};
 
   const employeeCode = form.employeeCode.trim().toUpperCase();
@@ -437,9 +440,9 @@ function validateEmployee(form, editingEmployeeId = null) {
   if (!employeeCode) {
     errors.employeeCode =
       "El código de empleado es obligatorio.";
-  } else if (!/^EMP-\d{4,}$/.test(employeeCode)) {
+  } else if (!new RegExp(`^${employeeCodePrefix}-\\d{4,}$`).test(employeeCode)) {
     errors.employeeCode =
-      "Utiliza el formato EMP-0001.";
+      `Utiliza el formato ${employeeCodePrefix}-0001.`;
   }
 
   if (!zkUserId) {
@@ -554,12 +557,32 @@ function EmployeeForm({
   const [isLoadingSupervisors, setIsLoadingSupervisors] = useState(false);
   const [supervisorsError, setSupervisorsError] = useState("");
   const [existingEmployees, setExistingEmployees] = useState([]);
+  const [employeeCodePrefix, setEmployeeCodePrefix] = useState("EMP");
   const navigate = useNavigate();
   const isEditMode = mode === "edit";
 
+  useEffect(() => {
+    let cancelled = false;
+
+    brandingApi
+      .obtenerConfig()
+      .then((data) => {
+        if (!cancelled && data?.prefijo_codigo_empleado) {
+          setEmployeeCodePrefix(data.prefijo_codigo_empleado);
+        }
+      })
+      .catch(() => {
+        // Sin configuración institucional todavía: se mantiene "EMP" neutro.
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const suggestedEmployeeCode = useMemo(
-    () => getNextEmployeeCode(existingEmployees),
-    [existingEmployees],
+    () => getNextEmployeeCode(existingEmployees, employeeCodePrefix),
+    [existingEmployees, employeeCodePrefix],
   );
 
   const suggestedZkUserId = useMemo(
@@ -700,7 +723,7 @@ function EmployeeForm({
     setForm((currentForm) => ({
       ...currentForm,
       employeeCode:
-        currentForm.employeeCode === "EMP-0000" ||
+        currentForm.employeeCode === `${employeeCodePrefix}-0000` ||
         !currentForm.employeeCode
           ? suggestedEmployeeCode
           : currentForm.employeeCode,
@@ -715,6 +738,7 @@ function EmployeeForm({
     isEditMode,
     suggestedEmployeeCode,
     suggestedZkUserId,
+    employeeCodePrefix,
   ]);
     useEffect(() => {
       let isMounted = true;
@@ -1249,6 +1273,7 @@ function EmployeeForm({
         availableDepartments: departments,
       },
       isEditMode ? initialEmployee?.id : null,
+      employeeCodePrefix,
     );
 
     if (Object.keys(validationErrors).length > 0) {

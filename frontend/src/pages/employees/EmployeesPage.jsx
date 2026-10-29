@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 
 import {
   ChevronLeft,
@@ -280,7 +280,14 @@ function EmployeesPage() {
     useState(false);
   const [employeesError, setEmployeesError] = useState("");
 
-  const [searchTerm, setSearchTerm] = useState("");
+  const [searchParams] = useSearchParams();
+  const [searchTerm, setSearchTerm] = useState(
+    () => searchParams.get("q") || "",
+  );
+
+  useEffect(() => {
+    setSearchTerm(searchParams.get("q") || "");
+  }, [searchParams]);
 
   const [showFilters, setShowFilters] = useState(false);
 

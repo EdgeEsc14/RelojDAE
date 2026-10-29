@@ -26,6 +26,7 @@ class PoliticaAsistenciaResponse(BaseModel):
     limite_tolerancia_segundos: int
     limite_retardo_menor_segundos: int
     limite_retardo_mayor_segundos: int
+    margen_tiempo_extra_segundos: int
 
     puntos_retardo_menor: int
     puntos_retardo_mayor: int
@@ -57,6 +58,7 @@ class PoliticaAsistenciaUpdate(BaseModel):
     limite_tolerancia_segundos: int = Field(..., ge=0)
     limite_retardo_menor_segundos: int = Field(..., ge=0)
     limite_retardo_mayor_segundos: int = Field(..., ge=0)
+    margen_tiempo_extra_segundos: int = Field(..., ge=0)
 
     puntos_retardo_menor: int = Field(..., ge=0)
     puntos_retardo_mayor: int = Field(..., ge=0)

@@ -16,6 +16,7 @@ import {
 const ACCESS_LEVELS = DATA_SCOPES;
 
 import LoginPage from "../pages/auth/LoginPage";
+import ChangePasswordPage from "../pages/auth/ChangePasswordPage";
 import DashboardPage from "../pages/dashboard/DashboardPage";
 
 import EmployeesPage from "../pages/employees/EmployeesPage";
@@ -48,6 +49,8 @@ import AccessDeniedPage from "../pages/errors/AccessDeniedPage";
 
 import EditEmployeePage from "../pages/employees/EditEmployeePage";
 
+import SystemUsersPage from "../pages/users/SystemUsersPage";
+
 function AppRoutes() {
   return (
     <Routes>
@@ -59,6 +62,11 @@ function AppRoutes() {
       <Route
         path="/login"
         element={<LoginPage />}
+      />
+
+      <Route
+        path="/change-password"
+        element={<ChangePasswordPage />}
       />
 
       <Route element={<AppLayout />}>
@@ -290,6 +298,18 @@ function AppRoutes() {
               requiredModule={MODULES.AUDITORIA}
             >
               <AuditPage />
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Usuarios del sistema (login/acceso) */}
+        <Route
+          path="/system-users"
+          element={
+            <ProtectedRoute
+              requiredModule={MODULES.USUARIOS_SISTEMA}
+            >
+              <SystemUsersPage />
             </ProtectedRoute>
           }
         />

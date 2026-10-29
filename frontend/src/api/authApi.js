@@ -56,6 +56,16 @@ export async function getCurrentUser() {
   return request("/auth/me");
 }
 
+export async function changePassword({ passwordActual, passwordNueva }) {
+  return request("/auth/change-password", {
+    method: "POST",
+    body: JSON.stringify({
+      password_actual: passwordActual,
+      password_nueva: passwordNueva,
+    }),
+  });
+}
+
 export function logoutUser() {
   clearStoredToken();
 }

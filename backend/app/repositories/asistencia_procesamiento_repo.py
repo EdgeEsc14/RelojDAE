@@ -210,10 +210,16 @@ def _calcular_minutos_extra(
     primera_entrada: datetime | None,
     ultima_salida: datetime | None,
     permite_tiempo_extra: bool,
+    margen_tiempo_extra_segundos: int,
 ) -> int:
+    """
+    Contrato §19: el margen es una franja de gracia que nunca se paga.
+    Solo el excedente que supera el margen cuenta como tiempo extra.
+    """
     if not permite_tiempo_extra:
         return 0
 
+    margen = max(0, int(margen_tiempo_extra_segundos or 0))
     modalidad = str(modalidad_tiempo_extra or "").upper()
 
     if modalidad == "ANTES_ENTRADA" and primera_entrada:
@@ -222,7 +228,8 @@ def _calcular_minutos_extra(
             - primera_entrada.replace(tzinfo=None)
         ).total_seconds()
 
-        return max(0, int(diff_seconds // 60))
+        excedente_segundos = max(0, diff_seconds - margen)
+        return int(excedente_segundos // 60)
 
     if modalidad == "DESPUES_SALIDA" and ultima_salida:
         diff_seconds = (
@@ -230,7 +237,8 @@ def _calcular_minutos_extra(
             - salida_programada.replace(tzinfo=None)
         ).total_seconds()
 
-        return max(0, int(diff_seconds // 60))
+        excedente_segundos = max(0, diff_seconds - margen)
+        return int(excedente_segundos // 60)
 
     return 0
 
@@ -485,8 +493,16 @@ def procesar_asistencia_diaria(
 
                     ah.horario_id,
 
-                    h.hora_entrada,
-                    h.hora_salida,
+                    -- Contrato §4: horario_dias puede sobrescribir la
+                    -- entrada/salida del horario base para el día de la
+                    -- semana correspondiente. Solo sobrescribe cuando hay
+                    -- una fila vigente para ese (horario_id, dia_semana)
+                    -- con es_laboral=TRUE (el CHECK de horario_dias
+                    -- garantiza que en ese caso ambas horas vienen no
+                    -- nulas). Si no hay fila, o es_laboral=FALSE, se usa
+                    -- el horario base sin cambios.
+                    COALESCE(hd.hora_entrada, h.hora_entrada) AS hora_entrada,
+                    COALESCE(hd.hora_salida, h.hora_salida) AS hora_salida,
                     h.tolerancia_entrada_minutos,
                     h.descanso_minutos,
                     h.permite_tiempo_extra,
@@ -494,8 +510,12 @@ def procesar_asistencia_diaria(
                     tt.duracion_jornada_minutos,
                     tt.modalidad_tiempo_extra,
 
-                    -- Detectar si el turno cruza medianoche
-                    (h.hora_salida < h.hora_entrada) AS cruza_medianoche,
+                    -- Detectar si el turno cruza medianoche, ya con la
+                    -- hora efectiva (horario_dias si aplica, si no base).
+                    (
+                        COALESCE(hd.hora_salida, h.hora_salida)
+                        < COALESCE(hd.hora_entrada, h.hora_entrada)
+                    ) AS cruza_medianoche,
 
                     -- Cuántas asignaciones ACTIVA vigentes hay para este
                     -- (empleado, fecha). Si es > 1 existen asignaciones
@@ -525,6 +545,11 @@ def procesar_asistencia_diaria(
                 INNER JOIN asistencia.tipos_turno tt
                     ON tt.id = h.tipo_turno_id
                    AND tt.activo = true
+
+                LEFT JOIN asistencia.horario_dias hd
+                    ON hd.horario_id = h.id
+                   AND hd.dia_semana = EXTRACT(ISODOW FROM dr.fecha)::smallint
+                   AND hd.es_laboral = true
             )
 
             SELECT
@@ -542,32 +567,91 @@ def procesar_asistencia_diaria(
                 u.cruza_medianoche,
                 u.asignaciones_vigentes,
 
-                -- Primera entrada del día evaluado (puede no existir)
-                (
-                    SELECT MIN(m.fecha_hora)
-                    FROM asistencia.marcaciones_crudas m
-                    WHERE m.empleado_id = u.empleado_id
-                      AND m.fecha = u.fecha
-                      AND m.punch = 0
-                ) AS primera_entrada,
-
-                -- Última salida: mismo día O día siguiente si cruza medianoche
-                -- (puede no existir)
-                (
-                    SELECT MAX(m.fecha_hora)
-                    FROM asistencia.marcaciones_crudas m
-                    WHERE m.empleado_id = u.empleado_id
-                      AND m.punch = 1
-                      AND (
-                          -- Salida el mismo día
-                          (NOT u.cruza_medianoche AND m.fecha = u.fecha)
-                          OR
-                          -- Salida el día siguiente (turno nocturno)
-                          (u.cruza_medianoche AND m.fecha IN (u.fecha, u.fecha + 1))
-                      )
-                ) AS ultima_salida
+                marcas.primera_entrada,
+                marcas.ultima_salida
 
             FROM universo u
+
+            -- ¿El reloj mandó al menos una marcación de SALIDA real
+            -- (punch=1) dentro de la ventana de esta jornada? Si sí, se
+            -- confía en esa clasificación del dispositivo (compatibilidad
+            -- con el comportamiento de siempre). Si no —reloj que manda
+            -- todo con el mismo punch, caso real detectado desde
+            -- 2026-08-21 por mala configuración del dispositivo físico—
+            -- se clasifica por orden cronológico en vez de por el código
+            -- reportado (Contrato §11: el punch es un detalle de
+            -- adaptador/mapeo ZKTeco, no del núcleo; el motor puede
+            -- trabajar con marcaciones clasificadas independientemente
+            -- del protocolo de origen).
+            CROSS JOIN LATERAL (
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM asistencia.marcaciones_crudas ms
+                    WHERE ms.empleado_id = u.empleado_id
+                      AND ms.punch = 1
+                      AND (
+                          (NOT u.cruza_medianoche AND ms.fecha = u.fecha)
+                          OR (u.cruza_medianoche AND ms.fecha IN (u.fecha, u.fecha + 1))
+                      )
+                ) AS existe
+            ) hay_salida_marcada
+
+            CROSS JOIN LATERAL (
+                SELECT
+                    CASE
+                        WHEN hay_salida_marcada.existe THEN (
+                            -- Por dispositivo: primera marcación de ENTRADA (punch=0).
+                            SELECT MIN(m.fecha_hora)
+                            FROM asistencia.marcaciones_crudas m
+                            WHERE m.empleado_id = u.empleado_id
+                              AND m.fecha = u.fecha
+                              AND m.punch = 0
+                        )
+                        ELSE (
+                            -- Por orden: primera marcación del día, sin importar punch.
+                            SELECT MIN(m.fecha_hora)
+                            FROM asistencia.marcaciones_crudas m
+                            WHERE m.empleado_id = u.empleado_id
+                              AND m.fecha = u.fecha
+                        )
+                    END AS primera_entrada,
+
+                    CASE
+                        WHEN hay_salida_marcada.existe THEN (
+                            -- Por dispositivo: última marcación de SALIDA (punch=1).
+                            SELECT MAX(m.fecha_hora)
+                            FROM asistencia.marcaciones_crudas m
+                            WHERE m.empleado_id = u.empleado_id
+                              AND m.punch = 1
+                              AND (
+                                  (NOT u.cruza_medianoche AND m.fecha = u.fecha)
+                                  OR (u.cruza_medianoche AND m.fecha IN (u.fecha, u.fecha + 1))
+                              )
+                        )
+                        ELSE (
+                            -- Por orden: última marcación de la ventana, siempre que
+                            -- sea POSTERIOR a la entrada. Si solo hay una marcación en
+                            -- el día, no cuenta como salida de sí misma -> NULL.
+                            SELECT MAX(m.fecha_hora)
+                            FROM asistencia.marcaciones_crudas m
+                            WHERE m.empleado_id = u.empleado_id
+                              AND (
+                                  (NOT u.cruza_medianoche AND m.fecha = u.fecha)
+                                  OR (u.cruza_medianoche AND m.fecha IN (u.fecha, u.fecha + 1))
+                              )
+                              AND m.fecha_hora > COALESCE(
+                                  (
+                                      SELECT MIN(m2.fecha_hora)
+                                      FROM asistencia.marcaciones_crudas m2
+                                      WHERE m2.empleado_id = u.empleado_id
+                                        AND m2.fecha = u.fecha
+                                  ),
+                                  '-infinity'::timestamp
+                              )
+                        )
+                    END AS ultima_salida
+            ) marcas
+
             ORDER BY u.fecha, u.empleado_id
             """
         ),
@@ -761,6 +845,9 @@ def procesar_asistencia_diaria(
                     primera_entrada=primera_entrada,
                     ultima_salida=ultima_salida,
                     permite_tiempo_extra=row["permite_tiempo_extra"],
+                    margen_tiempo_extra_segundos=politica[
+                        "margen_tiempo_extra_segundos"
+                    ],
                 )
 
                 minutos_ordinarios = _calcular_minutos_ordinarios(

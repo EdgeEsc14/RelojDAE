@@ -535,6 +535,50 @@ class TestMotorProcesamiento:
         if asistencia is not None:
             assert asistencia["estatus"] == "DIA_NO_LABORAL"
 
+    def test_horario_dias_sobrescribe_horas_del_dia(self, db_motor, seed_motor):
+        """
+        §4 Contrato: horario_dias debe poder sobrescribir entrada/salida
+        del horario base para el día de la semana correspondiente.
+
+        HORARIO_TEST (fixture) es 08:00-15:00. FECHA_TEST es martes
+        (dia_semana=2 ISO). Se configura un horario especial de martes
+        (10:00-18:00) distinto del base. Si el motor ignorara
+        horario_dias (comportamiento previo al fix), una entrada a las
+        10:05 se vería ~2h tarde contra el horario base -> FALTA. Con el
+        override, 10:05 es solo 5 min tarde contra 10:00 -> TOLERANCIA.
+        """
+        empleado_id = get_empleado_id(db_motor)
+        horario_id = db_motor.execute(text(
+            "SELECT id FROM asistencia.horarios WHERE codigo = 'HORARIO_TEST'"
+        )).scalar_one()
+
+        db_motor.execute(text(
+            """
+            INSERT INTO asistencia.horario_dias
+            (horario_id, dia_semana, es_laboral, hora_entrada, hora_salida)
+            VALUES (:horario_id, 2, TRUE, '10:00', '18:00')
+            """
+        ), {"horario_id": horario_id})
+
+        insertar_marcacion(db_motor, empleado_id, datetime(2026, 8, 18, 10, 5, 0), punch=0)
+        insertar_marcacion(db_motor, empleado_id, datetime(2026, 8, 18, 18, 0, 0), punch=1)
+        db_motor.commit()
+
+        resultado = procesar_asistencia_diaria(db_motor, FECHA_TEST, FECHA_TEST)
+
+        asistencia = obtener_asistencia(db_motor, empleado_id, FECHA_TEST)
+        assert asistencia is not None, f"Resultado: {resultado}"
+        assert asistencia["entrada_programada"].time() == time(10, 0), (
+            "La entrada programada debe venir del override de horario_dias (10:00), "
+            f"no del horario base (08:00). Obtenido: {asistencia['entrada_programada']}"
+        )
+        assert asistencia["salida_programada"].time() == time(18, 0)
+        assert asistencia["estatus"] == "TOLERANCIA", (
+            f"Esperaba TOLERANCIA (5 min tarde contra el override 10:00). "
+            f"Obtenido: {asistencia['estatus']} — si da FALTA, el motor está "
+            "ignorando horario_dias y comparando contra el horario base."
+        )
+        assert asistencia["minutos_extra"] == 0
 
     def test_laborable_extraordinario_end_to_end(self, db_motor, seed_motor):
         """§3: LABORABLE_EXTRAORDINARIO + marcaciones → procesamiento normal."""
@@ -637,6 +681,153 @@ class TestMotorProcesamiento:
         # El motor debe seleccionar primera entrada (07:58) y última salida (15:04)
         assert asistencia["primera_entrada"] is not None
         assert asistencia["ultima_salida"] is not None
+
+    def test_tiempo_extra_despues_salida_dentro_del_margen_no_cuenta(
+        self, db_motor, seed_motor
+    ):
+        """
+        §19: HORARIO_TEST es MATUTINO/DESPUES_SALIDA (08:00-15:00).
+        Salida a las 15:15 (15 min tarde) está dentro del margen por
+        defecto (1800 s = 30 min) -> minutos_extra debe ser 0.
+        """
+        empleado_id = get_empleado_id(db_motor)
+
+        insertar_marcacion(db_motor, empleado_id, datetime(2026, 8, 18, 7, 58, 0), punch=0)
+        insertar_marcacion(db_motor, empleado_id, datetime(2026, 8, 18, 15, 15, 0), punch=1)
+        db_motor.commit()
+
+        procesar_asistencia_diaria(db_motor, FECHA_TEST, FECHA_TEST)
+
+        asistencia = obtener_asistencia(db_motor, empleado_id, FECHA_TEST)
+        assert asistencia["minutos_extra"] == 0
+
+    def test_tiempo_extra_despues_salida_excedente_sobre_el_margen(
+        self, db_motor, seed_motor
+    ):
+        """
+        §19: el margen nunca se paga. Salida a las 15:45 (45 min tarde)
+        con margen de 30 min -> solo 15 min cuentan como extra.
+        """
+        empleado_id = get_empleado_id(db_motor)
+
+        insertar_marcacion(db_motor, empleado_id, datetime(2026, 8, 18, 7, 58, 0), punch=0)
+        insertar_marcacion(db_motor, empleado_id, datetime(2026, 8, 18, 15, 45, 0), punch=1)
+        db_motor.commit()
+
+        procesar_asistencia_diaria(db_motor, FECHA_TEST, FECHA_TEST)
+
+        asistencia = obtener_asistencia(db_motor, empleado_id, FECHA_TEST)
+        assert asistencia["minutos_extra"] == 15
+
+    def test_tiempo_extra_antes_entrada_respeta_margen_configurable(
+        self, db_motor, seed_motor
+    ):
+        """
+        §19: turno VESPERTINO/ANTES_ENTRADA con margen personalizado de
+        10 minutos (600 s). Llegar 8 min antes está dentro del margen
+        (0 extra); llegar 4 horas antes deja un excedente de
+        230 min (240 - 10) de tiempo extra.
+        """
+        empleado_id = get_empleado_id(db_motor)
+
+        db_motor.execute(text(
+            "INSERT INTO asistencia.tipos_turno "
+            "(codigo, nombre, duracion_jornada_minutos, modalidad_tiempo_extra, "
+            "hora_entrada_desde, hora_entrada_hasta) "
+            "VALUES ('VESPERTINO', 'Vespertino', 360, 'ANTES_ENTRADA', '14:00', NULL)"
+        ))
+        db_motor.execute(text(
+            "INSERT INTO asistencia.horarios "
+            "(codigo, nombre, tipo_turno_id, hora_entrada, hora_salida, "
+            "tolerancia_entrada_minutos, permite_tiempo_extra) "
+            "VALUES ('HORARIO_VESPERTINO', 'Vespertino 14-22', "
+            "(SELECT id FROM asistencia.tipos_turno WHERE codigo='VESPERTINO'), "
+            "'14:00', '22:00', 10, TRUE)"
+        ))
+        db_motor.execute(text(
+            "UPDATE asistencia.asignaciones_horario "
+            "SET horario_id = (SELECT id FROM asistencia.horarios WHERE codigo='HORARIO_VESPERTINO') "
+            "WHERE empleado_id = :eid"
+        ), {"eid": empleado_id})
+        db_motor.execute(text(
+            "UPDATE asistencia.politicas_asistencia "
+            "SET margen_tiempo_extra_segundos = 600 "
+            "WHERE codigo = 'POLITICA_DAE_GENERAL'"
+        ))
+        db_motor.commit()
+
+        # Dentro del margen: llega a las 13:52 (8 min antes de las 14:00).
+        insertar_marcacion(db_motor, empleado_id, datetime(2026, 8, 18, 13, 52, 0), punch=0)
+        insertar_marcacion(db_motor, empleado_id, datetime(2026, 8, 18, 22, 5, 0), punch=1)
+        db_motor.commit()
+
+        procesar_asistencia_diaria(db_motor, FECHA_TEST, FECHA_TEST)
+        asistencia = obtener_asistencia(db_motor, empleado_id, FECHA_TEST)
+        assert asistencia["minutos_extra"] == 0
+
+        # Fuera del margen: llega a las 10:00 (4 horas antes de las 14:00).
+        fecha_2 = date(2026, 8, 19)
+        insertar_marcacion(db_motor, empleado_id, datetime(2026, 8, 19, 10, 0, 0), punch=0)
+        insertar_marcacion(db_motor, empleado_id, datetime(2026, 8, 19, 22, 5, 0), punch=1)
+        db_motor.commit()
+
+        procesar_asistencia_diaria(db_motor, fecha_2, fecha_2)
+        asistencia_2 = obtener_asistencia(db_motor, empleado_id, fecha_2)
+        assert asistencia_2["minutos_extra"] == 230
+
+    def test_marcaciones_con_el_mismo_punch_se_clasifican_por_orden(
+        self, db_motor, seed_motor
+    ):
+        """
+        Contrato §11: el código punch del reloj es un detalle de
+        adaptador, no del núcleo. Si el reloj manda TODAS las
+        marcaciones del día con el mismo punch (p. ej. mal configurado y
+        clasificando todo como "Entrada", caso real detectado el
+        2026-08-21), el motor debe clasificar por orden cronológico:
+        primera marcación = entrada, última = salida. Sin esto, la
+        salida real (18:21) se pierde porque nunca hay un punch=1 que
+        buscar.
+        """
+        empleado_id = get_empleado_id(db_motor)
+
+        insertar_marcacion(db_motor, empleado_id, datetime(2026, 8, 18, 7, 58, 0), punch=0)
+        insertar_marcacion(db_motor, empleado_id, datetime(2026, 8, 18, 15, 2, 0), punch=0)
+        db_motor.commit()
+
+        resultado = procesar_asistencia_diaria(db_motor, FECHA_TEST, FECHA_TEST)
+
+        asistencia = obtener_asistencia(db_motor, empleado_id, FECHA_TEST)
+        assert asistencia is not None, f"Resultado: {resultado}"
+        assert asistencia["primera_entrada"].replace(tzinfo=None) == datetime(2026, 8, 18, 7, 58, 0), (
+            "La marcación más temprana del día debe clasificarse como entrada, "
+            "aunque el reloj la haya etiquetado con el mismo punch que la otra."
+        )
+        assert asistencia["ultima_salida"].replace(tzinfo=None) == datetime(2026, 8, 18, 15, 2, 0), (
+            "La marcación más tardía del día debe clasificarse como salida, "
+            f"aunque el reloj la haya mandado como punch=0. Obtenido: {asistencia}"
+        )
+        assert asistencia["estatus"] == "COMPLETO"
+
+    def test_marcaciones_con_el_mismo_punch_una_sola_marca_no_genera_salida(
+        self, db_motor, seed_motor
+    ):
+        """
+        Si el reloj manda todo con el mismo punch y el empleado solo
+        marcó UNA vez en el día, esa única marca debe seguir siendo
+        entrada (no se inventa una salida de la nada).
+        """
+        empleado_id = get_empleado_id(db_motor)
+
+        insertar_marcacion(db_motor, empleado_id, datetime(2026, 8, 18, 7, 58, 0), punch=0)
+        db_motor.commit()
+
+        resultado = procesar_asistencia_diaria(db_motor, FECHA_TEST, FECHA_TEST)
+
+        asistencia = obtener_asistencia(db_motor, empleado_id, FECHA_TEST)
+        assert asistencia is not None, f"Resultado: {resultado}"
+        assert asistencia["primera_entrada"].replace(tzinfo=None) == datetime(2026, 8, 18, 7, 58, 0)
+        assert asistencia["ultima_salida"] is None
+        assert asistencia["estatus"] == "OMISION_SALIDA"
 
     def test_empleado_sin_marcaciones_entra_al_universo(self, db_motor, seed_motor):
         """

@@ -93,6 +93,7 @@ class TestActualizarPoliticaActiva:
             limite_tolerancia_segundos=725,   # 12:05
             limite_retardo_menor_segundos=1325,  # 22:05
             limite_retardo_mayor_segundos=1925,  # 32:05
+            margen_tiempo_extra_segundos=1830,  # 30 min 30 s
             puntos_retardo_menor=1,
             puntos_retardo_mayor=3,
             puntos_para_descanso=8,
@@ -105,6 +106,7 @@ class TestActualizarPoliticaActiva:
         assert actualizada["limite_tolerancia_segundos"] == 725
         assert actualizada["limite_retardo_menor_segundos"] == 1325
         assert actualizada["limite_retardo_mayor_segundos"] == 1925
+        assert actualizada["margen_tiempo_extra_segundos"] == 1830
         assert actualizada["puntos_retardo_mayor"] == 3
         assert actualizada["puntos_para_descanso"] == 8
         assert actualizada["descansos_para_revision_baja"] == 5
@@ -119,6 +121,7 @@ class TestActualizarPoliticaActiva:
             limite_tolerancia_segundos=600,
             limite_retardo_menor_segundos=1200,
             limite_retardo_mayor_segundos=1800,
+            margen_tiempo_extra_segundos=1800,
             puntos_retardo_menor=1,
             puntos_retardo_mayor=2,
             puntos_para_descanso=10,
@@ -145,6 +148,7 @@ class TestActualizarPoliticaActiva:
             "limite_tolerancia_segundos": 600,
             "limite_retardo_menor_segundos": 1200,
             "limite_retardo_mayor_segundos": 1800,
+            "margen_tiempo_extra_segundos": 1800,
             "puntos_retardo_menor": 1,
             "puntos_retardo_mayor": 2,
             "puntos_para_descanso": 10,
@@ -162,6 +166,7 @@ class TestActualizarPoliticaActiva:
                 limite_tolerancia_segundos=600,
                 limite_retardo_menor_segundos=1200,
                 limite_retardo_mayor_segundos=1800,
+                margen_tiempo_extra_segundos=1800,
                 puntos_retardo_menor=3,
                 puntos_retardo_mayor=1,
                 puntos_para_descanso=10,
@@ -182,6 +187,7 @@ class TestActualizarPoliticaActiva:
             "limite_tolerancia_segundos": 600,
             "limite_retardo_menor_segundos": 1200,
             "limite_retardo_mayor_segundos": 1800,
+            "margen_tiempo_extra_segundos": 1800,
             "puntos_retardo_menor": 1,
             "puntos_retardo_mayor": 2,
             "puntos_para_descanso": 10,
@@ -199,6 +205,21 @@ class TestActualizarPoliticaActiva:
                 limite_tolerancia_segundos=-1,
                 limite_retardo_menor_segundos=1200,
                 limite_retardo_mayor_segundos=1800,
+                margen_tiempo_extra_segundos=1800,
+                puntos_retardo_menor=1,
+                puntos_retardo_mayor=2,
+                puntos_para_descanso=10,
+                descansos_para_revision_baja=7,
+                faltas_consecutivas_revision_baja=3,
+            )
+
+    def test_rechaza_margen_tiempo_extra_negativo(self):
+        with pytest.raises(ValidationError):
+            PoliticaAsistenciaUpdate(
+                limite_tolerancia_segundos=600,
+                limite_retardo_menor_segundos=1200,
+                limite_retardo_mayor_segundos=1800,
+                margen_tiempo_extra_segundos=-1,
                 puntos_retardo_menor=1,
                 puntos_retardo_mayor=2,
                 puntos_para_descanso=10,
@@ -283,6 +304,7 @@ VALID_UPDATE_PAYLOAD = {
     "limite_tolerancia_segundos": 600,
     "limite_retardo_menor_segundos": 1200,
     "limite_retardo_mayor_segundos": 1800,
+    "margen_tiempo_extra_segundos": 1800,
     "puntos_retardo_menor": 1,
     "puntos_retardo_mayor": 2,
     "puntos_para_descanso": 10,

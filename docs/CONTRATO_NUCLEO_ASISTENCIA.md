@@ -334,7 +334,49 @@ A partir de este contrato:
 
 ---
 
-## 18. Orden de hardening
+## 19. Margen de tiempo extra
+
+El motor reconoce tiempo extra según la modalidad configurada en
+`tipos_turno.modalidad_tiempo_extra`:
+
+- `DESPUES_SALIDA`: excedente entre `MAX(salida)` y `salida_programada`.
+- `ANTES_ENTRADA`: excedente entre `entrada_programada` y `MIN(entrada)`.
+
+Cada turno solo evalúa su propia modalidad. Un turno `DESPUES_SALIDA`
+que llega temprano, o un turno `ANTES_ENTRADA` que sale tarde, no
+generan tiempo extra por el lado que no les corresponde.
+
+**Margen configurable:**
+
+La fuente oficial de este margen es:
+
+```
+asistencia.politicas_asistencia.margen_tiempo_extra_segundos
+```
+
+Queda prohibido hardcodear este valor en el motor (Contrato §5/§17).
+El motor debe resolver la política vigente para la fecha procesada,
+igual que los demás límites de la política.
+
+**Regla de cálculo:**
+
+El margen nunca se paga. Solo el excedente que supera el margen se
+reconoce como tiempo extra:
+
+```
+minutos_extra = max(0, excedente_total_segundos - margen_tiempo_extra_segundos) / 60
+```
+
+Ejemplo: turno matutino (`DESPUES_SALIDA`) sale 45 minutos después de
+su `salida_programada`, con `margen_tiempo_extra_segundos` = 1800
+(30 min) → `minutos_extra = 15`, no 45.
+
+Este margen es independiente de `limite_tolerancia_segundos` (que
+clasifica retardos de entrada) y no debe confundirse con él.
+
+---
+
+## 20. Orden de hardening
 
 | Fase | Descripción |
 |------|-------------|

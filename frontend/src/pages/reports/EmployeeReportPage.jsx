@@ -15,23 +15,30 @@ import {
   descargarReporteEmpleadoCSV,
   descargarReporteEmpleadoPDF,
 } from "../../api/reportesApi";
+import { brandingApi } from "../../api/brandingApi";
 
 function getStatusClass(estatus) {
   if (estatus === "COMPLETO") return "badge success";
+  if (estatus === "TOLERANCIA") return "badge neutral";
   if (estatus === "RETARDO_MENOR") return "badge warning";
   if (estatus === "RETARDO_MAYOR") return "badge warning";
   if (estatus === "FALTA") return "badge danger";
+  if (estatus === "OMISION_ENTRADA") return "badge neutral";
   if (estatus === "OMISION_SALIDA") return "badge neutral";
+  if (estatus === "DIA_NO_LABORAL") return "badge neutral";
   return "badge neutral";
 }
 
 function getStatusLabel(estatus) {
   const labels = {
     COMPLETO: "Completo",
+    TOLERANCIA: "Tolerancia",
     RETARDO_MENOR: "Retardo menor",
     RETARDO_MAYOR: "Retardo mayor",
     FALTA: "Falta",
+    OMISION_ENTRADA: "Om. entrada",
     OMISION_SALIDA: "Om. salida",
+    DIA_NO_LABORAL: "No laboral",
   };
   return labels[estatus] || estatus || "";
 }
@@ -82,12 +89,20 @@ function EmployeeReportPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [downloading, setDownloading] = useState("");
+  const [institution, setInstitution] = useState(null);
 
   useEffect(() => {
     if (employeeCode && fechaInicio && fechaFin) {
       loadReport();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    brandingApi
+      .obtenerConfig()
+      .then(setInstitution)
+      .catch(() => setInstitution(null));
   }, []);
 
   async function loadReport() {
@@ -230,7 +245,7 @@ function EmployeeReportPage() {
             </div>
 
             <div>
-              <p>Dirección de Administración Escolar</p>
+              <p>{institution?.nombre_corto || institution?.nombre_institucion || ""}</p>
               <h1>Reporte de Asistencia</h1>
               <span>
                 Periodo del {formatDate(report.fecha_inicio)} al {formatDate(report.fecha_fin)}
@@ -282,6 +297,10 @@ function EmployeeReportPage() {
                 <strong>{report.resumen.dias_completos}</strong>
               </div>
               <div>
+                <span>Tolerancia</span>
+                <strong>{report.resumen.tolerancias}</strong>
+              </div>
+              <div>
                 <span>Retardos menores</span>
                 <strong>{report.resumen.retardos_menores}</strong>
               </div>
@@ -292,6 +311,22 @@ function EmployeeReportPage() {
               <div>
                 <span>Faltas</span>
                 <strong>{report.resumen.faltas}</strong>
+              </div>
+              <div>
+                <span>Omisiones de entrada</span>
+                <strong>{report.resumen.omisiones_entrada}</strong>
+              </div>
+              <div>
+                <span>Omisiones de salida</span>
+                <strong>{report.resumen.omisiones_salida}</strong>
+              </div>
+              <div>
+                <span>Días no laborales</span>
+                <strong>{report.resumen.dias_no_laborales}</strong>
+              </div>
+              <div>
+                <span>Requieren revisión</span>
+                <strong>{report.resumen.dias_requieren_revision}</strong>
               </div>
               <div>
                 <span>Total puntos</span>
@@ -333,6 +368,7 @@ function EmployeeReportPage() {
                     <th>Extra</th>
                     <th>Estatus</th>
                     <th>Puntos</th>
+                    <th>Revisión</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -352,6 +388,13 @@ function EmployeeReportPage() {
                         </span>
                       </td>
                       <td>{dia.puntos_generados || 0}</td>
+                      <td>
+                        {dia.requiere_revision ? (
+                          <span className="badge warning">Sí</span>
+                        ) : (
+                          "—"
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>

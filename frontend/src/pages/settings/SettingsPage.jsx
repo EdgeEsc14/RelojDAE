@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
 
 import {
+  AlertCircle,
   Building2,
   CalendarClock,
   DatabaseBackup,
-  FileText,
   Image as ImageIcon,
   LockKeyhole,
   Save,
@@ -16,6 +16,127 @@ import {
 import PageHeader from "../../components/layout/PageHeader";
 import { apiRequest } from "../../api/client";
 import { getStoredToken } from "../../api/authApi";
+import { politicasApi } from "../../api/politicasApi";
+import { brandingApi } from "../../api/brandingApi";
+
+// ============================================================
+// Política de asistencia — conversión segundos <-> minutos/segundos
+//
+// asistencia.politicas_asistencia guarda los límites en SEGUNDOS para
+// no perder precisión en fronteras como 08:10:59 (Contrato §5). La UI
+// los presenta como minutos + segundos, pero el valor que se envía al
+// backend siempre se reconstruye a segundos completos, sin redondear.
+// ============================================================
+
+function segundosAMinutosSegundos(totalSegundos) {
+  const total = Math.max(0, Number(totalSegundos ?? 0));
+  return {
+    minutos: Math.floor(total / 60),
+    segundos: total % 60,
+  };
+}
+
+function minutosSegundosASegundos(minutos, segundos) {
+  const min = Math.max(0, Number(minutos) || 0);
+  const seg = Math.max(0, Number(segundos) || 0);
+  return min * 60 + seg;
+}
+
+function politicaAFormulario(politica) {
+  const tolerancia = segundosAMinutosSegundos(politica.limite_tolerancia_segundos);
+  const retardoMenor = segundosAMinutosSegundos(politica.limite_retardo_menor_segundos);
+  const retardoMayor = segundosAMinutosSegundos(politica.limite_retardo_mayor_segundos);
+  const margenExtra = segundosAMinutosSegundos(politica.margen_tiempo_extra_segundos);
+
+  return {
+    toleranciaMinutos: tolerancia.minutos,
+    toleranciaSegundos: tolerancia.segundos,
+    retardoMenorMinutos: retardoMenor.minutos,
+    retardoMenorSegundos: retardoMenor.segundos,
+    retardoMayorMinutos: retardoMayor.minutos,
+    retardoMayorSegundos: retardoMayor.segundos,
+    margenExtraMinutos: margenExtra.minutos,
+    margenExtraSegundos: margenExtra.segundos,
+    puntosRetardoMenor: politica.puntos_retardo_menor,
+    puntosRetardoMayor: politica.puntos_retardo_mayor,
+    puntosParaDescanso: politica.puntos_para_descanso,
+    descansosParaRevisionBaja: politica.descansos_para_revision_baja,
+    faltasConsecutivasRevisionBaja: politica.faltas_consecutivas_revision_baja,
+  };
+}
+
+function formularioAPayload(form) {
+  return {
+    limite_tolerancia_segundos: minutosSegundosASegundos(
+      form.toleranciaMinutos,
+      form.toleranciaSegundos
+    ),
+    limite_retardo_menor_segundos: minutosSegundosASegundos(
+      form.retardoMenorMinutos,
+      form.retardoMenorSegundos
+    ),
+    limite_retardo_mayor_segundos: minutosSegundosASegundos(
+      form.retardoMayorMinutos,
+      form.retardoMayorSegundos
+    ),
+    margen_tiempo_extra_segundos: minutosSegundosASegundos(
+      form.margenExtraMinutos,
+      form.margenExtraSegundos
+    ),
+    puntos_retardo_menor: Number(form.puntosRetardoMenor) || 0,
+    puntos_retardo_mayor: Number(form.puntosRetardoMayor) || 0,
+    puntos_para_descanso: Number(form.puntosParaDescanso) || 0,
+    descansos_para_revision_baja: Number(form.descansosParaRevisionBaja) || 0,
+    faltas_consecutivas_revision_baja:
+      Number(form.faltasConsecutivasRevisionBaja) || 0,
+  };
+}
+
+function validarFormularioPolitica(form) {
+  const errors = {};
+
+  const toleranciaSeg = minutosSegundosASegundos(
+    form.toleranciaMinutos,
+    form.toleranciaSegundos
+  );
+  const retardoMenorSeg = minutosSegundosASegundos(
+    form.retardoMenorMinutos,
+    form.retardoMenorSegundos
+  );
+  const retardoMayorSeg = minutosSegundosASegundos(
+    form.retardoMayorMinutos,
+    form.retardoMayorSegundos
+  );
+
+  if (!(toleranciaSeg < retardoMenorSeg && retardoMenorSeg < retardoMayorSeg)) {
+    errors.limites =
+      "Los límites deben ser crecientes: tolerancia < retardo menor < retardo mayor.";
+  }
+
+  if (Number(form.puntosRetardoMayor) < Number(form.puntosRetardoMenor)) {
+    errors.puntos =
+      "Los puntos de retardo mayor no pueden ser menores que los de retardo menor.";
+  }
+
+  if (Number(form.puntosParaDescanso) <= 0) {
+    errors.puntosParaDescanso = "Debe ser mayor a 0.";
+  }
+
+  if (Number(form.descansosParaRevisionBaja) <= 0) {
+    errors.descansosParaRevisionBaja = "Debe ser mayor a 0.";
+  }
+
+  if (Number(form.faltasConsecutivasRevisionBaja) <= 0) {
+    errors.faltasConsecutivasRevisionBaja = "Debe ser mayor a 0.";
+  }
+
+  return errors;
+}
+
+function formatSegundosLegible(totalSegundos) {
+  const { minutos, segundos } = segundosAMinutosSegundos(totalSegundos);
+  return segundos > 0 ? `${minutos} min ${segundos} s` : `${minutos} min`;
+}
 
 function getTodayValue() {
   return new Date().toISOString().slice(0, 10);
@@ -40,33 +161,47 @@ function SettingsPage() {
 
   // ============================================================
   // Estado — Datos institucionales
+  //
+  // Fuente real: GET/PUT /branding/config. Es la misma configuración
+  // que usan los generadores de reportes PDF/CSV — no se mantiene una
+  // copia local en localStorage, para no crear una segunda fuente de
+  // verdad. Sin configurar, el backend expone valores neutros.
   // ============================================================
   const [institution, setInstitution] = useState({
-    parentInstitution: "Instituto Politécnico Nacional",
-    name: "Dirección de Administración Escolar",
-    shortName: "DAE",
-    reportFooter: "Documento generado por el sistema de control de asistencia DAE.",
+    nombreInstitucion: "",
+    nombreCorto: "",
+    piePagina: "",
+    prefijoCodigoEmpleado: "EMP",
   });
+  const [institutionLoading, setInstitutionLoading] = useState(true);
+  const [institutionError, setInstitutionError] = useState("");
+  const [institutionSaving, setInstitutionSaving] = useState(false);
 
   // ============================================================
-  // Estado — Periodo y asistencia
+  // Estado — Periodo de evaluación (preferencia local de UI; no
+  // existe todavía un endpoint de configuración para esto)
   // ============================================================
-  const [attendance, setAttendance] = useState({
+  const [periodo, setPeriodo] = useState({
     activePeriod: defaultPeriod.nombre,
     periodStart: defaultPeriod.fechaInicio,
     periodEnd: defaultPeriod.fechaFin,
-    toleranciaMinutos: 10,
-    retardoMenorDesde: 11,
-    retardoMenorHasta: 20,
-    retardoMayorDesde: 21,
-    retardoMayorHasta: 30,
-    faltaDesde: 31,
-    puntosRetardoMenor: 1,
-    puntosRetardoMayor: 2,
-    puntosDO: 10,
-    dosParaRevision: 7,
-    faltasConsecutivasRevision: 3,
   });
+
+  // ============================================================
+  // Estado — Política de asistencia
+  //
+  // Fuente única de verdad: asistencia.politicas_asistencia, vía
+  // GET/PUT /politicas-asistencia/activa. No se mantiene copia local
+  // ni valores hardcodeados: esta pantalla lee y edita el mismo
+  // registro que usa el motor de procesamiento (Contrato §5).
+  // ============================================================
+  const [politica, setPolitica] = useState(null);
+  const [politicaForm, setPoliticaForm] = useState(null);
+  const [politicaLoading, setPoliticaLoading] = useState(true);
+  const [politicaError, setPoliticaError] = useState("");
+  const [politicaFormErrors, setPoliticaFormErrors] = useState({});
+  const [politicaSaving, setPoliticaSaving] = useState(false);
+  const [politicaSaved, setPoliticaSaved] = useState(false);
 
   // ============================================================
   // Estado — Seguridad
@@ -110,8 +245,7 @@ function SettingsPage() {
       const saved = localStorage.getItem("relojdae_settings");
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (parsed.institution) setInstitution(parsed.institution);
-        if (parsed.attendance) setAttendance(parsed.attendance);
+        if (parsed.periodo) setPeriodo(parsed.periodo);
         if (parsed.security) setSecurity(parsed.security);
         if (parsed.backup) setBackup((prev) => ({ ...prev, ...parsed.backup }));
       }
@@ -124,6 +258,118 @@ function SettingsPage() {
   useEffect(() => {
     loadLogoInfo();
   }, []);
+
+  // Cargar configuración institucional real al inicio
+  useEffect(() => {
+    loadInstitution();
+  }, []);
+
+  async function loadInstitution() {
+    setInstitutionLoading(true);
+    setInstitutionError("");
+
+    try {
+      const data = await brandingApi.obtenerConfig();
+      setInstitution({
+        nombreInstitucion: data.nombre_institucion,
+        nombreCorto: data.nombre_corto,
+        piePagina: data.pie_pagina,
+        prefijoCodigoEmpleado: data.prefijo_codigo_empleado || "EMP",
+      });
+    } catch (err) {
+      setInstitutionError(
+        err.message || "No fue posible obtener la configuración institucional."
+      );
+    } finally {
+      setInstitutionLoading(false);
+    }
+  }
+
+  async function handleSaveInstitution() {
+    setInstitutionSaving(true);
+    setInstitutionError("");
+
+    try {
+      const data = await brandingApi.actualizarConfig({
+        nombre_institucion: institution.nombreInstitucion,
+        nombre_corto: institution.nombreCorto,
+        pie_pagina: institution.piePagina,
+        prefijo_codigo_empleado: institution.prefijoCodigoEmpleado,
+      });
+      setInstitution({
+        nombreInstitucion: data.nombre_institucion,
+        nombreCorto: data.nombre_corto,
+        piePagina: data.pie_pagina,
+        prefijoCodigoEmpleado: data.prefijo_codigo_empleado || "EMP",
+      });
+      setSavedSection("institution");
+      setTimeout(() => setSavedSection(""), 3000);
+    } catch (err) {
+      setInstitutionError(
+        err.message || "No fue posible guardar la configuración institucional."
+      );
+    } finally {
+      setInstitutionSaving(false);
+    }
+  }
+
+  // Cargar la política de asistencia ACTIVA vigente al inicio
+  useEffect(() => {
+    loadPolitica();
+  }, []);
+
+  async function loadPolitica() {
+    setPoliticaLoading(true);
+    setPoliticaError("");
+
+    try {
+      const data = await politicasApi.obtenerActiva();
+      setPolitica(data);
+      setPoliticaForm(politicaAFormulario(data));
+      setPoliticaFormErrors({});
+    } catch (err) {
+      setPolitica(null);
+      setPoliticaForm(null);
+      setPoliticaError(
+        err.message ||
+          "No fue posible obtener la política de asistencia vigente."
+      );
+    } finally {
+      setPoliticaLoading(false);
+    }
+  }
+
+  function handlePoliticaFieldChange(field, value) {
+    setPoliticaForm((prev) => ({ ...prev, [field]: value }));
+  }
+
+  async function handleSavePolitica() {
+    const errors = validarFormularioPolitica(politicaForm);
+    setPoliticaFormErrors(errors);
+
+    if (Object.keys(errors).length > 0) {
+      return;
+    }
+
+    setPoliticaSaving(true);
+    setPoliticaError("");
+
+    try {
+      const actualizada = await politicasApi.actualizarActiva(
+        formularioAPayload(politicaForm)
+      );
+      setPolitica(actualizada);
+      setPoliticaForm(politicaAFormulario(actualizada));
+      setPoliticaSaved(true);
+      setTimeout(() => setPoliticaSaved(false), 3000);
+    } catch (err) {
+      setPoliticaError(
+        err.message || "No fue posible guardar la política de asistencia."
+      );
+    } finally {
+      setPoliticaSaving(false);
+    }
+  }
 
   async function loadLogoInfo() {
     try {
@@ -214,8 +460,7 @@ function SettingsPage() {
     const saved = localStorage.getItem("relojdae_settings");
     const config = saved ? JSON.parse(saved) : {};
 
-    if (section === "institution") config.institution = institution;
-    if (section === "attendance") config.attendance = attendance;
+    if (section === "periodo") config.periodo = periodo;
     if (section === "security") config.security = security;
     if (section === "backup") config.backup = { frequency: backup.frequency, retention: backup.retention };
 
@@ -244,8 +489,8 @@ function SettingsPage() {
     setInstitution((prev) => ({ ...prev, [field]: value }));
   }
 
-  function handleAttendanceChange(field, value) {
-    setAttendance((prev) => ({ ...prev, [field]: value }));
+  function handlePeriodoChange(field, value) {
+    setPeriodo((prev) => ({ ...prev, [field]: value }));
   }
 
   function handleSecurityChange(field, value) {
@@ -265,16 +510,18 @@ function SettingsPage() {
           <div className="metric-icon"><Building2 size={22} /></div>
           <div>
             <p>Institución</p>
-            <strong className="metric-text">{institution.shortName}</strong>
-            <span>{institution.parentInstitution}</span>
+            <strong className="metric-text">
+              {institution.nombreInstitucion || "Sin configurar"}
+            </strong>
+            <span>{institution.nombreCorto}</span>
           </div>
         </article>
         <article className="metric-card">
           <div className="metric-icon"><CalendarClock size={22} /></div>
           <div>
             <p>Periodo activo</p>
-            <strong className="metric-text">{attendance.activePeriod}</strong>
-            <span>{attendance.periodStart} a {attendance.periodEnd}</span>
+            <strong className="metric-text">{periodo.activePeriod}</strong>
+            <span>{periodo.periodStart} a {periodo.periodEnd}</span>
           </div>
         </article>
         <article className="metric-card">
@@ -292,132 +539,266 @@ function SettingsPage() {
         <div className="panel-header">
           <div>
             <h3>Datos institucionales</h3>
-            <p>Información usada en encabezados, reportes y vistas generales.</p>
+            <p>
+              Usados en el encabezado y pie de página de los reportes PDF/CSV
+              generados por el sistema (junto con el logo configurado abajo).
+              Sin configurar, los reportes muestran valores neutros.
+            </p>
           </div>
           <Building2 size={22} />
         </div>
-        <div className="form-grid">
-          <label>
-            Institución superior
-            <input value={institution.parentInstitution} onChange={(e) => handleInstitutionChange("parentInstitution", e.target.value)} />
-          </label>
-          <label>
-            Nombre del área
-            <input value={institution.name} onChange={(e) => handleInstitutionChange("name", e.target.value)} />
-          </label>
-          <label>
-            Nombre corto
-            <input value={institution.shortName} onChange={(e) => handleInstitutionChange("shortName", e.target.value)} />
-          </label>
-          <label className="span-2">
-            Pie de reporte
-            <textarea rows="3" value={institution.reportFooter} onChange={(e) => handleInstitutionChange("reportFooter", e.target.value)} />
-          </label>
-        </div>
-        <div style={{ marginTop: "16px", display: "flex", alignItems: "center", gap: "12px" }}>
-          <button className="primary-button" type="button" onClick={() => saveSection("institution")}>
-            <Save size={17} /> Guardar datos institucionales
-          </button>
-          {savedSection === "institution" && <span style={{ color: "var(--color-success-text)", fontSize: "13px", fontWeight: 700 }}>✓ Guardado</span>}
-        </div>
+
+        {institutionLoading && <p>Cargando configuración institucional…</p>}
+
+        {!institutionLoading && institutionError && (
+          <div className="form-error" style={{ marginBottom: "14px" }}>
+            <AlertCircle size={18} />
+            <span>{institutionError}</span>
+          </div>
+        )}
+
+        {!institutionLoading && (
+          <>
+            <div className="form-grid">
+              <label>
+                Nombre de la institución
+                <input
+                  value={institution.nombreInstitucion}
+                  onChange={(e) => handleInstitutionChange("nombreInstitucion", e.target.value)}
+                />
+              </label>
+              <label>
+                Nombre corto / unidad (subtítulo)
+                <input
+                  value={institution.nombreCorto}
+                  onChange={(e) => handleInstitutionChange("nombreCorto", e.target.value)}
+                />
+              </label>
+              <label className="span-2">
+                Pie de página de reportes
+                <textarea
+                  rows="3"
+                  value={institution.piePagina}
+                  onChange={(e) => handleInstitutionChange("piePagina", e.target.value)}
+                />
+              </label>
+              <label>
+                Prefijo de código de empleado
+                <input
+                  value={institution.prefijoCodigoEmpleado}
+                  maxLength={10}
+                  onChange={(e) =>
+                    handleInstitutionChange(
+                      "prefijoCodigoEmpleado",
+                      e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "")
+                    )
+                  }
+                />
+                <span style={{ fontSize: "12px", color: "var(--color-text-secondary)" }}>
+                  Se usa para generar códigos nuevos, ej. {institution.prefijoCodigoEmpleado || "EMP"}-0001. No renombra empleados existentes.
+                </span>
+              </label>
+            </div>
+            <div style={{ marginTop: "16px", display: "flex", alignItems: "center", gap: "12px" }}>
+              <button
+                className="primary-button"
+                type="button"
+                onClick={handleSaveInstitution}
+                disabled={institutionSaving}
+              >
+                <Save size={17} /> {institutionSaving ? "Guardando..." : "Guardar datos institucionales"}
+              </button>
+              {savedSection === "institution" && <span style={{ color: "var(--color-success-text)", fontSize: "13px", fontWeight: 700 }}>✓ Guardado</span>}
+            </div>
+          </>
+        )}
       </section>
 
-      {/* Asistencia y periodo */}
+      {/* Periodo de evaluación */}
       <section className="panel-card">
         <div className="panel-header">
           <div>
-            <h3>Asistencia y periodo</h3>
-            <p>Periodo activo y reglas de puntualidad. Define cuántos minutos son retardo, falta, y cuántos puntos se asignan.</p>
+            <h3>Periodo de evaluación</h3>
+            <p>Periodo activo mostrado en los paneles del sistema.</p>
           </div>
           <CalendarClock size={22} />
         </div>
         <div className="form-grid">
           <label>
             Periodo activo
-            <input value={attendance.activePeriod} onChange={(e) => handleAttendanceChange("activePeriod", e.target.value)} />
+            <input value={periodo.activePeriod} onChange={(e) => handlePeriodoChange("activePeriod", e.target.value)} />
           </label>
           <label>
             Fecha inicio
-            <input type="date" value={attendance.periodStart} onChange={(e) => handleAttendanceChange("periodStart", e.target.value)} />
+            <input type="date" value={periodo.periodStart} onChange={(e) => handlePeriodoChange("periodStart", e.target.value)} />
           </label>
           <label>
             Fecha fin
-            <input type="date" value={attendance.periodEnd} onChange={(e) => handleAttendanceChange("periodEnd", e.target.value)} />
+            <input type="date" value={periodo.periodEnd} onChange={(e) => handlePeriodoChange("periodEnd", e.target.value)} />
           </label>
-          <label>
-            Tolerancia puntual (min)
-            <input type="number" min="0" value={attendance.toleranciaMinutos} onChange={(e) => handleAttendanceChange("toleranciaMinutos", Number(e.target.value))} />
-          </label>
-        </div>
-
-        <div style={{ marginTop: "20px", padding: "16px", background: "var(--color-surface-soft)", borderRadius: "14px", border: "1px solid var(--color-border-soft)" }}>
-          <h4 style={{ margin: "0 0 12px", fontSize: "15px" }}>Reglas de puntualidad</h4>
-          <p style={{ fontSize: "13px", color: "var(--color-text-muted)", marginBottom: "14px" }}>
-            Basado en la hora de entrada programada. Ejemplo: si entra a las 8:00 y tolerancia es 10 min, es puntual hasta las 8:10.
-          </p>
-          <div className="form-grid">
-            <label>
-              Puntual: 0 a {attendance.toleranciaMinutos} min
-              <input type="number" min="0" value={attendance.toleranciaMinutos} onChange={(e) => handleAttendanceChange("toleranciaMinutos", Number(e.target.value))} />
-              <span style={{ fontSize: "11px", color: "var(--color-text-muted)" }}>0 puntos</span>
-            </label>
-            <label>
-              Retardo menor: {attendance.retardoMenorDesde} a {attendance.retardoMenorHasta} min
-              <div style={{ display: "flex", gap: "8px" }}>
-                <input type="number" min="1" value={attendance.retardoMenorDesde} onChange={(e) => handleAttendanceChange("retardoMenorDesde", Number(e.target.value))} style={{ width: "70px" }} />
-                <span style={{ alignSelf: "center" }}>a</span>
-                <input type="number" min="1" value={attendance.retardoMenorHasta} onChange={(e) => handleAttendanceChange("retardoMenorHasta", Number(e.target.value))} style={{ width: "70px" }} />
-              </div>
-              <span style={{ fontSize: "11px", color: "var(--color-text-muted)" }}>{attendance.puntosRetardoMenor} punto(s)</span>
-            </label>
-            <label>
-              Retardo mayor: {attendance.retardoMayorDesde} a {attendance.retardoMayorHasta} min
-              <div style={{ display: "flex", gap: "8px" }}>
-                <input type="number" min="1" value={attendance.retardoMayorDesde} onChange={(e) => handleAttendanceChange("retardoMayorDesde", Number(e.target.value))} style={{ width: "70px" }} />
-                <span style={{ alignSelf: "center" }}>a</span>
-                <input type="number" min="1" value={attendance.retardoMayorHasta} onChange={(e) => handleAttendanceChange("retardoMayorHasta", Number(e.target.value))} style={{ width: "70px" }} />
-              </div>
-              <span style={{ fontSize: "11px", color: "var(--color-text-muted)" }}>{attendance.puntosRetardoMayor} punto(s)</span>
-            </label>
-            <label>
-              Falta: a partir de {attendance.faltaDesde} min
-              <input type="number" min="1" value={attendance.faltaDesde} onChange={(e) => handleAttendanceChange("faltaDesde", Number(e.target.value))} />
-              <span style={{ fontSize: "11px", color: "var(--color-text-muted)" }}>Sin puntos (se cuenta como falta)</span>
-            </label>
-          </div>
-        </div>
-
-        <div style={{ marginTop: "16px", padding: "16px", background: "var(--color-surface-soft)", borderRadius: "14px", border: "1px solid var(--color-border-soft)" }}>
-          <h4 style={{ margin: "0 0 12px", fontSize: "15px" }}>Reglas de acumulación de puntos</h4>
-          <div className="form-grid">
-            <label>
-              Puntos por retardo menor
-              <input type="number" min="0" value={attendance.puntosRetardoMenor} onChange={(e) => handleAttendanceChange("puntosRetardoMenor", Number(e.target.value))} />
-            </label>
-            <label>
-              Puntos por retardo mayor
-              <input type="number" min="0" value={attendance.puntosRetardoMayor} onChange={(e) => handleAttendanceChange("puntosRetardoMayor", Number(e.target.value))} />
-            </label>
-            <label>
-              Puntos para 1 DO (Día Omisión)
-              <input type="number" min="1" value={attendance.puntosDO} onChange={(e) => handleAttendanceChange("puntosDO", Number(e.target.value))} />
-            </label>
-            <label>
-              DOs para revisión de baja
-              <input type="number" min="1" value={attendance.dosParaRevision} onChange={(e) => handleAttendanceChange("dosParaRevision", Number(e.target.value))} />
-            </label>
-            <label>
-              Faltas consecutivas para revisión de baja
-              <input type="number" min="1" value={attendance.faltasConsecutivasRevision} onChange={(e) => handleAttendanceChange("faltasConsecutivasRevision", Number(e.target.value))} />
-            </label>
-          </div>
         </div>
         <div style={{ marginTop: "16px", display: "flex", alignItems: "center", gap: "12px" }}>
-          <button className="primary-button" type="button" onClick={() => saveSection("attendance")}>
-            <Save size={17} /> Guardar reglas de asistencia
+          <button className="primary-button" type="button" onClick={() => saveSection("periodo")}>
+            <Save size={17} /> Guardar periodo
           </button>
-          {savedSection === "attendance" && <span style={{ color: "var(--color-success-text)", fontSize: "13px", fontWeight: 700 }}>✓ Guardado</span>}
+          {savedSection === "periodo" && <span style={{ color: "var(--color-success-text)", fontSize: "13px", fontWeight: 700 }}>✓ Guardado</span>}
         </div>
+      </section>
+
+      {/* Política de asistencia — fuente única: asistencia.politicas_asistencia */}
+      <section className="panel-card">
+        <div className="panel-header">
+          <div>
+            <h3>Política de asistencia</h3>
+            <p>
+              Política ACTIVA vigente en <code>asistencia.politicas_asistencia</code>.
+              Estas son las mismas reglas que usa el motor de procesamiento: no existe
+              una copia independiente en esta pantalla.
+            </p>
+          </div>
+          <ShieldCheck size={22} />
+        </div>
+
+        {politicaLoading && <p>Cargando política de asistencia…</p>}
+
+        {!politicaLoading && politicaError && (
+          <div className="form-error" style={{ marginBottom: "14px" }}>
+            <AlertCircle size={18} />
+            <span>{politicaError}</span>
+          </div>
+        )}
+
+        {!politicaLoading && politica && politicaForm && (
+          <>
+            <div className="form-grid">
+              <label>
+                Código
+                <input value={politica.codigo} readOnly style={{ background: "var(--color-surface-soft)" }} />
+              </label>
+              <label>
+                Nombre
+                <input value={politica.nombre} readOnly style={{ background: "var(--color-surface-soft)" }} />
+              </label>
+              <label>
+                Vigente desde
+                <input value={politica.vigencia_desde} readOnly style={{ background: "var(--color-surface-soft)" }} />
+              </label>
+              <label>
+                Tipo de periodo
+                <input value={politica.tipo_periodo} readOnly style={{ background: "var(--color-surface-soft)" }} />
+              </label>
+            </div>
+
+            <div style={{ marginTop: "20px", padding: "16px", background: "var(--color-surface-soft)", borderRadius: "14px", border: "1px solid var(--color-border-soft)" }}>
+              <h4 style={{ margin: "0 0 12px", fontSize: "15px" }}>Límites de puntualidad (minutos y segundos)</h4>
+              <p style={{ fontSize: "13px", color: "var(--color-text-muted)", marginBottom: "14px" }}>
+                Tiempo transcurrido desde la hora de entrada programada. Cada límite es el
+                punto hasta el cual aplica esa clasificación; el motor de procesamiento usa
+                la precisión exacta en segundos, así que un valor como &ldquo;10 min 59 s&rdquo;
+                se guarda y se aplica tal cual, sin redondear a minutos completos.
+              </p>
+              <div className="form-grid">
+                <label>
+                  Tolerancia — hasta (0 puntos)
+                  <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                    <input type="number" min="0" value={politicaForm.toleranciaMinutos} onChange={(e) => handlePoliticaFieldChange("toleranciaMinutos", e.target.value)} style={{ width: "70px" }} />
+                    <span>min</span>
+                    <input type="number" min="0" max="59" value={politicaForm.toleranciaSegundos} onChange={(e) => handlePoliticaFieldChange("toleranciaSegundos", e.target.value)} style={{ width: "70px" }} />
+                    <span>s</span>
+                  </div>
+                </label>
+                <label>
+                  Retardo menor — hasta ({politicaForm.puntosRetardoMenor} punto(s))
+                  <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                    <input type="number" min="0" value={politicaForm.retardoMenorMinutos} onChange={(e) => handlePoliticaFieldChange("retardoMenorMinutos", e.target.value)} style={{ width: "70px" }} />
+                    <span>min</span>
+                    <input type="number" min="0" max="59" value={politicaForm.retardoMenorSegundos} onChange={(e) => handlePoliticaFieldChange("retardoMenorSegundos", e.target.value)} style={{ width: "70px" }} />
+                    <span>s</span>
+                  </div>
+                </label>
+                <label>
+                  Retardo mayor — hasta ({politicaForm.puntosRetardoMayor} punto(s))
+                  <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                    <input type="number" min="0" value={politicaForm.retardoMayorMinutos} onChange={(e) => handlePoliticaFieldChange("retardoMayorMinutos", e.target.value)} style={{ width: "70px" }} />
+                    <span>min</span>
+                    <input type="number" min="0" max="59" value={politicaForm.retardoMayorSegundos} onChange={(e) => handlePoliticaFieldChange("retardoMayorSegundos", e.target.value)} style={{ width: "70px" }} />
+                    <span>s</span>
+                  </div>
+                  <span style={{ fontSize: "11px", color: "var(--color-text-muted)" }}>Después de este límite: FALTA</span>
+                </label>
+              </div>
+              {politicaFormErrors.limites && (
+                <div className="form-error" style={{ marginTop: "12px" }}>
+                  <AlertCircle size={16} />
+                  <span>{politicaFormErrors.limites}</span>
+                </div>
+              )}
+            </div>
+
+            <div style={{ marginTop: "16px", padding: "16px", background: "var(--color-surface-soft)", borderRadius: "14px", border: "1px solid var(--color-border-soft)" }}>
+              <h4 style={{ margin: "0 0 12px", fontSize: "15px" }}>Margen de tiempo extra</h4>
+              <p style={{ fontSize: "13px", color: "var(--color-text-muted)", marginBottom: "14px" }}>
+                Franja de gracia que nunca se paga como tiempo extra. Se aplica según la
+                modalidad del turno: turnos matutinos (después de la salida) o vespertinos
+                (antes de la entrada). Solo el excedente por encima de este margen se
+                reconoce como minutos extra.
+              </p>
+              <div className="form-grid">
+                <label>
+                  Margen antes de contar tiempo extra
+                  <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                    <input type="number" min="0" value={politicaForm.margenExtraMinutos} onChange={(e) => handlePoliticaFieldChange("margenExtraMinutos", e.target.value)} style={{ width: "70px" }} />
+                    <span>min</span>
+                    <input type="number" min="0" max="59" value={politicaForm.margenExtraSegundos} onChange={(e) => handlePoliticaFieldChange("margenExtraSegundos", e.target.value)} style={{ width: "70px" }} />
+                    <span>s</span>
+                  </div>
+                </label>
+              </div>
+            </div>
+
+            <div style={{ marginTop: "16px", padding: "16px", background: "var(--color-surface-soft)", borderRadius: "14px", border: "1px solid var(--color-border-soft)" }}>
+              <h4 style={{ margin: "0 0 12px", fontSize: "15px" }}>Puntos y revisión de baja</h4>
+              <div className="form-grid">
+                <label>
+                  Puntos por retardo menor
+                  <input type="number" min="0" value={politicaForm.puntosRetardoMenor} onChange={(e) => handlePoliticaFieldChange("puntosRetardoMenor", e.target.value)} />
+                </label>
+                <label>
+                  Puntos por retardo mayor
+                  <input type="number" min="0" value={politicaForm.puntosRetardoMayor} onChange={(e) => handlePoliticaFieldChange("puntosRetardoMayor", e.target.value)} />
+                </label>
+                <label>
+                  Puntos para 1 descanso obligatorio
+                  <input type="number" min="1" value={politicaForm.puntosParaDescanso} onChange={(e) => handlePoliticaFieldChange("puntosParaDescanso", e.target.value)} />
+                  {politicaFormErrors.puntosParaDescanso && <span style={{ fontSize: "11px", color: "var(--color-danger-text)" }}>{politicaFormErrors.puntosParaDescanso}</span>}
+                </label>
+                <label>
+                  Descansos para revisión de baja
+                  <input type="number" min="1" value={politicaForm.descansosParaRevisionBaja} onChange={(e) => handlePoliticaFieldChange("descansosParaRevisionBaja", e.target.value)} />
+                  {politicaFormErrors.descansosParaRevisionBaja && <span style={{ fontSize: "11px", color: "var(--color-danger-text)" }}>{politicaFormErrors.descansosParaRevisionBaja}</span>}
+                </label>
+                <label>
+                  Faltas consecutivas para revisión de baja
+                  <input type="number" min="1" value={politicaForm.faltasConsecutivasRevisionBaja} onChange={(e) => handlePoliticaFieldChange("faltasConsecutivasRevisionBaja", e.target.value)} />
+                  {politicaFormErrors.faltasConsecutivasRevisionBaja && <span style={{ fontSize: "11px", color: "var(--color-danger-text)" }}>{politicaFormErrors.faltasConsecutivasRevisionBaja}</span>}
+                </label>
+              </div>
+              {politicaFormErrors.puntos && (
+                <div className="form-error" style={{ marginTop: "12px" }}>
+                  <AlertCircle size={16} />
+                  <span>{politicaFormErrors.puntos}</span>
+                </div>
+              )}
+            </div>
+
+            <div style={{ marginTop: "16px", display: "flex", alignItems: "center", gap: "12px" }}>
+              <button className="primary-button" type="button" onClick={handleSavePolitica} disabled={politicaSaving}>
+                <Save size={17} /> {politicaSaving ? "Guardando..." : "Guardar política de asistencia"}
+              </button>
+              {politicaSaved && <span style={{ color: "var(--color-success-text)", fontSize: "13px", fontWeight: 700 }}>✓ Guardado</span>}
+            </div>
+          </>
+        )}
       </section>
 
       {/* Seguridad */}
@@ -610,30 +991,54 @@ function SettingsPage() {
               </tr>
             </thead>
             <tbody>
-              <tr>
-                <td><strong>Tolerancia de entrada</strong></td>
-                <td>{attendance.toleranciaMinutos} minutos</td>
-                <td>Asistencia</td>
-                <td>Margen permitido posterior a la hora programada de entrada</td>
-              </tr>
-              <tr>
-                <td><strong>Puntos → DO</strong></td>
-                <td>{attendance.puntosDO} puntos = 1 DO</td>
-                <td>Asistencia</td>
-                <td>Cada {attendance.puntosDO} puntos acumulados genera un Día de Omisión</td>
-              </tr>
-              <tr>
-                <td><strong>DOs → Revisión de baja</strong></td>
-                <td>{attendance.dosParaRevision} DOs</td>
-                <td>Asistencia</td>
-                <td>Marcar empleado para revisión de baja al alcanzar {attendance.dosParaRevision} DOs</td>
-              </tr>
-              <tr>
-                <td><strong>Faltas consecutivas</strong></td>
-                <td>{attendance.faltasConsecutivasRevision} faltas</td>
-                <td>Asistencia</td>
-                <td>{attendance.faltasConsecutivasRevision} faltas seguidas = revisión de baja</td>
-              </tr>
+              {politica ? (
+                <>
+                  <tr>
+                    <td><strong>Tolerancia de entrada</strong></td>
+                    <td>{formatSegundosLegible(politica.limite_tolerancia_segundos)}</td>
+                    <td>Asistencia</td>
+                    <td>Margen permitido posterior a la hora programada de entrada (política {politica.codigo})</td>
+                  </tr>
+                  <tr>
+                    <td><strong>Retardo mayor / falta</strong></td>
+                    <td>{formatSegundosLegible(politica.limite_retardo_mayor_segundos)}</td>
+                    <td>Asistencia</td>
+                    <td>Después de este límite la entrada se clasifica como FALTA</td>
+                  </tr>
+                  <tr>
+                    <td><strong>Margen de tiempo extra</strong></td>
+                    <td>{formatSegundosLegible(politica.margen_tiempo_extra_segundos)}</td>
+                    <td>Asistencia</td>
+                    <td>Franja que nunca se paga; solo el excedente sobre este margen cuenta como tiempo extra</td>
+                  </tr>
+                  <tr>
+                    <td><strong>Puntos → descanso obligatorio</strong></td>
+                    <td>{politica.puntos_para_descanso} puntos = 1 descanso</td>
+                    <td>Asistencia</td>
+                    <td>Cada {politica.puntos_para_descanso} puntos acumulados genera un descanso obligatorio</td>
+                  </tr>
+                  <tr>
+                    <td><strong>Descansos → Revisión de baja</strong></td>
+                    <td>{politica.descansos_para_revision_baja} descansos</td>
+                    <td>Asistencia</td>
+                    <td>Marcar empleado para revisión de baja al alcanzar {politica.descansos_para_revision_baja} descansos</td>
+                  </tr>
+                  <tr>
+                    <td><strong>Faltas consecutivas</strong></td>
+                    <td>{politica.faltas_consecutivas_revision_baja} faltas</td>
+                    <td>Asistencia</td>
+                    <td>{politica.faltas_consecutivas_revision_baja} faltas seguidas = revisión de baja</td>
+                  </tr>
+                </>
+              ) : (
+                <tr>
+                  <td colSpan={4}>
+                    {politicaLoading
+                      ? "Cargando reglas de asistencia…"
+                      : "No fue posible cargar las reglas de asistencia (ver política de asistencia arriba)."}
+                  </td>
+                </tr>
+              )}
               <tr>
                 <td><strong>Checadas crudas</strong></td>
                 <td>Inmutables</td>

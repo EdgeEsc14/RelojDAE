@@ -15,6 +15,7 @@ import {
   descargarReporteDepartamentalCSV,
   descargarReporteDepartamentalPDF,
 } from "../../api/reportesApi";
+import { catalogosApi } from "../../api/catalogosApi";
 
 function minutosAHoras(min) {
   if (!min) return "00:00";
@@ -36,6 +37,8 @@ function DepartmentReportPage() {
 
   const [fechaInicio, setFechaInicio] = useState(defaults.inicio);
   const [fechaFin, setFechaFin] = useState(defaults.fin);
+  const [departamentos, setDepartamentos] = useState([]);
+  const [unidadOrganizacionalId, setUnidadOrganizacionalId] = useState("");
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -48,13 +51,29 @@ function DepartmentReportPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    catalogosApi
+      .listarUnidadesOrganizacionales()
+      .then((items) => {
+        const soloDepartamentos = (items || []).filter(
+          (u) => u.tipo_unidad_codigo === "DEPARTAMENTO"
+        );
+        setDepartamentos(soloDepartamentos);
+      })
+      .catch(() => setDepartamentos([]));
+  }, []);
+
   async function loadReport() {
     if (!fechaInicio || !fechaFin) return;
 
     setLoading(true);
     setError("");
     try {
-      const data = await getReporteDepartamentalJSON(fechaInicio, fechaFin);
+      const data = await getReporteDepartamentalJSON(
+        fechaInicio,
+        fechaFin,
+        unidadOrganizacionalId || undefined
+      );
       setReport(data);
     } catch (err) {
       setError(err.message || "Error al generar reporte.");
@@ -67,7 +86,7 @@ function DepartmentReportPage() {
   async function handleDownloadCSV() {
     setDownloading("csv");
     try {
-      await descargarReporteDepartamentalCSV(fechaInicio, fechaFin);
+      await descargarReporteDepartamentalCSV(fechaInicio, fechaFin, unidadOrganizacionalId || undefined);
     } catch (err) {
       alert("Error al descargar CSV: " + err.message);
     } finally {
@@ -78,7 +97,7 @@ function DepartmentReportPage() {
   async function handleDownloadPDF() {
     setDownloading("pdf");
     try {
-      await descargarReporteDepartamentalPDF(fechaInicio, fechaFin);
+      await descargarReporteDepartamentalPDF(fechaInicio, fechaFin, unidadOrganizacionalId || undefined);
     } catch (err) {
       alert("Error al descargar PDF: " + err.message);
     } finally {
@@ -127,6 +146,22 @@ function DepartmentReportPage() {
       {/* Filtros */}
       <section className="panel-card">
         <div className="filters-row">
+          <div className="filter-field">
+            <label htmlFor="dept-unidad">Departamento</label>
+            <select
+              id="dept-unidad"
+              value={unidadOrganizacionalId}
+              onChange={(e) => setUnidadOrganizacionalId(e.target.value)}
+            >
+              <option value="">Todos los departamentos</option>
+              {departamentos.map((depto) => (
+                <option key={depto.id} value={depto.id}>
+                  {depto.nombre}
+                </option>
+              ))}
+            </select>
+          </div>
+
           <div className="filter-field">
             <label htmlFor="dept-fecha-inicio">Desde</label>
             <input
@@ -234,10 +269,14 @@ function DepartmentReportPage() {
                     <th>Departamento</th>
                     <th>Empleados</th>
                     <th>Completos</th>
+                    <th>Tolerancia</th>
                     <th>Ret. menores</th>
                     <th>Ret. mayores</th>
                     <th>Faltas</th>
-                    <th>Omisiones</th>
+                    <th>Om. entrada</th>
+                    <th>Om. salida</th>
+                    <th>No laborales</th>
+                    <th>Revisar</th>
                     <th>Puntos</th>
                     <th>Hrs. ordinarias</th>
                     <th>Hrs. extra</th>
@@ -247,14 +286,18 @@ function DepartmentReportPage() {
                   {report.departamentos.map((dept) => (
                     <tr key={dept.unidad_id || dept.unidad_nombre}>
                       <td>
-                        <strong>{dept.unidad_nombre || "Sin departamento"}</strong>
+                        <strong>{dept.unidad_nombre || "Sin departamento (nivel superior)"}</strong>
                       </td>
                       <td>{dept.total_empleados}</td>
                       <td>{dept.dias_completos}</td>
+                      <td>{dept.tolerancias}</td>
                       <td>{dept.retardos_menores}</td>
                       <td>{dept.retardos_mayores}</td>
                       <td>{dept.faltas}</td>
+                      <td>{dept.omisiones_entrada}</td>
                       <td>{dept.omisiones_salida}</td>
+                      <td>{dept.dias_no_laborales}</td>
+                      <td>{dept.dias_requieren_revision}</td>
                       <td>{dept.total_puntos}</td>
                       <td>{minutosAHoras(dept.total_minutos_ordinarios)}</td>
                       <td>{minutosAHoras(dept.total_minutos_extra)}</td>
@@ -268,7 +311,7 @@ function DepartmentReportPage() {
             <div className="mobile-card-list">
               {report.departamentos.map((dept) => (
                 <article className="mobile-data-card" key={`${dept.unidad_id}-mobile`}>
-                  <h4>{dept.unidad_nombre || "Sin departamento"}</h4>
+                  <h4>{dept.unidad_nombre || "Sin departamento (nivel superior)"}</h4>
                   <div className="mobile-data-grid">
                     <div>
                       <span>Empleados</span>
@@ -302,6 +345,55 @@ function DepartmentReportPage() {
             {report.departamentos.length === 0 && (
               <div className="empty-state">
                 <p>No hay datos de asistencia procesada para el periodo seleccionado.</p>
+              </div>
+            )}
+          </section>
+
+          {/* Detalle por empleado */}
+          <section className="panel-card">
+            <div className="panel-header">
+              <div>
+                <h3>Detalle por empleado</h3>
+                <p>Empleados incluidos en el concentrado anterior.</p>
+              </div>
+            </div>
+
+            <div className="simple-table desktop-table">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Código</th>
+                    <th>Nombre</th>
+                    <th>Departamento</th>
+                    <th>Completos</th>
+                    <th>Ret. menores</th>
+                    <th>Ret. mayores</th>
+                    <th>Faltas</th>
+                    <th>Revisar</th>
+                    <th>Puntos</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(report.detalle_empleados || []).map((emp) => (
+                    <tr key={emp.empleado_id}>
+                      <td>{emp.codigo_empleado}</td>
+                      <td>{emp.nombre_completo}</td>
+                      <td>{emp.unidad_nombre || "Sin departamento (nivel superior)"}</td>
+                      <td>{emp.dias_completos}</td>
+                      <td>{emp.retardos_menores}</td>
+                      <td>{emp.retardos_mayores}</td>
+                      <td>{emp.faltas}</td>
+                      <td>{emp.dias_requieren_revision}</td>
+                      <td>{emp.total_puntos}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {(report.detalle_empleados || []).length === 0 && (
+              <div className="empty-state">
+                <p>No hay empleados con asistencia procesada para el periodo seleccionado.</p>
               </div>
             )}
           </section>

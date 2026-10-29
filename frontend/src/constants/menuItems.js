@@ -8,6 +8,7 @@ import {
   Fingerprint,
   LayoutDashboard,
   Settings,
+  ShieldCheck,
   Users,
 } from "lucide-react";
 
@@ -61,6 +62,12 @@ export const menuItems = [
     path: "/calendar",
     icon: CalendarDays,
     module: MODULES.HORARIOS,
+  },
+  {
+    label: "Usuarios del sistema",
+    path: "/system-users",
+    icon: ShieldCheck,
+    module: MODULES.USUARIOS_SISTEMA,
   },
   {
     label: "Auditoría",

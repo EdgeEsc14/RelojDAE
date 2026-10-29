@@ -134,6 +134,8 @@ function DeviceDetailPage() {
   function openEdit() {
     setEditData({
       nombre: device.nombre || "",
+      ip: device.ip || "",
+      puerto: device.puerto || 4370,
       ubicacion: device.ubicacion || "",
       descripcion: device.descripcion || "",
       activo: device.activo,
@@ -146,8 +148,17 @@ function DeviceDetailPage() {
     e.preventDefault();
     setEditLoading(true);
     setEditError("");
+    if (!editData.ip || !editData.ip.trim()) {
+      setEditError("La IP es obligatoria.");
+      setEditLoading(false);
+      return;
+    }
     try {
-      await actualizarDispositivo(deviceId, editData);
+      await actualizarDispositivo(deviceId, {
+        ...editData,
+        ip: editData.ip.trim(),
+        puerto: Number(editData.puerto) || 4370,
+      });
       setShowEdit(false);
       loadDevice();
     } catch (err) {
@@ -316,6 +327,14 @@ function DeviceDetailPage() {
               <div className="form-field">
                 <label>Nombre</label>
                 <input type="text" value={editData.nombre} onChange={(e) => setEditData({...editData, nombre: e.target.value})} />
+              </div>
+              <div className="form-field">
+                <label>IP</label>
+                <input type="text" value={editData.ip} placeholder="192.168.1.100" onChange={(e) => setEditData({...editData, ip: e.target.value})} />
+              </div>
+              <div className="form-field">
+                <label>Puerto</label>
+                <input type="number" value={editData.puerto} onChange={(e) => setEditData({...editData, puerto: e.target.value})} />
               </div>
               <div className="form-field">
                 <label>Ubicación</label>

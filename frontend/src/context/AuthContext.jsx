@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 
 import {
+  changePassword as changePasswordRequest,
   clearStoredToken,
   getCurrentUser,
   getStoredToken,
@@ -25,6 +26,7 @@ function normalizeUser(user) {
     empleadoId: user.empleado_id,
     codigoEmpleado: user.codigo_empleado,
     correoVerificado: user.correo_verificado,
+    requiereCambioPassword: Boolean(user.requiere_cambio_password),
     raw: user,
   };
 }
@@ -84,6 +86,17 @@ export function AuthProvider({ children }) {
     setUser(null);
   }
 
+  async function changePassword({ passwordActual, passwordNueva }) {
+    const response = await changePasswordRequest({
+      passwordActual,
+      passwordNueva,
+    });
+
+    setUser(normalizeUser(response));
+
+    return response;
+  }
+
   useEffect(() => {
     loadSession();
   }, []);
@@ -97,6 +110,7 @@ export function AuthProvider({ children }) {
       isAuthenticated: Boolean(user && token),
       login,
       logout,
+      changePassword,
       reloadSession: loadSession,
     }),
     [user, token, loading, authError]

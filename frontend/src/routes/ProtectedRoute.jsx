@@ -40,6 +40,18 @@ function ProtectedRoute({
     );
   }
 
+  // Bloquea el resto de la aplicación hasta completar el cambio
+  // de contraseña obligatorio (ver POST /auth/change-password).
+  if (user.requiereCambioPassword) {
+    return (
+      <Navigate
+        to="/change-password"
+        replace
+        state={{ from: location }}
+      />
+    );
+  }
+
   const permissions = getModulePermissions(
     user.role,
     requiredModule,

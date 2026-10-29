@@ -332,6 +332,7 @@ CREATE TABLE asistencia.politicas_asistencia (
     limite_tolerancia_segundos INTEGER NOT NULL,
     limite_retardo_menor_segundos INTEGER NOT NULL,
     limite_retardo_mayor_segundos INTEGER NOT NULL,
+    margen_tiempo_extra_segundos INTEGER NOT NULL DEFAULT 1800,
     puntos_retardo_menor SMALLINT NOT NULL DEFAULT 1,
     puntos_retardo_mayor SMALLINT NOT NULL DEFAULT 2,
     puntos_para_descanso SMALLINT NOT NULL DEFAULT 10,
@@ -346,7 +347,9 @@ CREATE TABLE asistencia.politicas_asistencia (
     fecha_modificacion TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT pk_politicas_asistencia PRIMARY KEY (id),
-    CONSTRAINT uq_politicas_asistencia_codigo_version UNIQUE (codigo, version)
+    CONSTRAINT uq_politicas_asistencia_codigo_version UNIQUE (codigo, version),
+    CONSTRAINT ck_politicas_margen_tiempo_extra_no_negativo
+        CHECK (margen_tiempo_extra_segundos >= 0)
 );
 
 -- ============================================================

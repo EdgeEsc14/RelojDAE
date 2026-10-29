@@ -6,31 +6,15 @@ import {
   Clock,
   Fingerprint,
   RefreshCw,
-  TrendingUp,
-  UserCheck,
   Users,
-  Download,
   PlayCircle,
+  CalendarDays,
 } from "lucide-react";
 
-import {
-  AreaChart,
-  Area,
-  BarChart,
-  Bar,
-  PieChart,
-  Pie,
-  Cell,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  Legend,
-} from "recharts";
 
 import { dashboardApi } from "../../api/dashboardApi";
 import { asistenciaApi } from "../../api/asistenciaApi";
-import { getZkHealth, syncZkAttendanceToDb, syncZkTime } from "../../api/zkApi";
+import { getZkHealth, syncZkAttendanceToDb } from "../../api/zkApi";
 import PageHeader from "../../components/layout/PageHeader";
 
 function formatNumber(value) {
@@ -53,51 +37,19 @@ function safeText(value, fallback = "No disponible") {
   return String(value ?? "").trim() || fallback;
 }
 
-function formatShortDate(value) {
-  if (!value) return "";
-  try {
-    return new Intl.DateTimeFormat("es-MX", {
-      day: "2-digit",
-      month: "short",
-    }).format(new Date(`${value}T00:00:00`));
-  } catch {
-    return String(value);
-  }
-}
-
 function getPunchLabel(row) {
   return row.punch_label || row.status_label || `Punch ${row.punch ?? "N/D"}`;
 }
 
-function getPercent(value, total) {
-  const safeValue = Number(value ?? 0);
-  const safeTotal = Number(total ?? 0);
-  if (safeTotal <= 0) return 0;
-  return Math.round((safeValue / safeTotal) * 100);
-}
-
-// Colores para gráficas
-const COLORS = {
-  completos: "#10b981",
-  retardos: "#f59e0b",
-  faltas: "#ef4444",
-  revision: "#8b5cf6",
-  omisiones: "#f97316",
-  puntualidad: "#3b82f6",
-  asistencia: "#10b981",
-};
-
-const PIE_COLORS = ["#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#f97316", "#6366f1"];
-
-const INCIDENCIA_COLORS = {
-  RETARDO: "#f59e0b",
-  FALTA: "#ef4444",
-  OMISION: "#f97316",
-  TIEMPO_EXTRA: "#3b82f6",
-  SANCION: "#dc2626",
-  REVISION: "#8b5cf6",
-  ADMINISTRATIVA: "#6b7280",
-};
+const CATEGORIAS_HOY = [
+  { estatus: "COMPLETO",       campo: "completos",         label: "Puntuales",    variant: "success" },
+  { estatus: "TOLERANCIA",     campo: "tolerancias",       label: "Tolerancia",   variant: "teal"    },
+  { estatus: "RETARDO_MENOR",  campo: "retardos_menores",  label: "Ret. menor",   variant: "warning" },
+  { estatus: "RETARDO_MAYOR",  campo: "retardos_mayores",  label: "Ret. mayor",   variant: "orange"  },
+  { estatus: "FALTA",          campo: "faltas",            label: "Faltas",       variant: "danger"  },
+  { estatus: "OMISION_ENTRADA",campo: "omisiones_entrada", label: "Om. entrada",  variant: "muted"   },
+  { estatus: "OMISION_SALIDA", campo: "omisiones_salida",  label: "Om. salida",   variant: "muted"   },
+];
 
 function DashboardPage() {
   const [dashboard, setDashboard] = useState(null);
@@ -105,11 +57,58 @@ function DashboardPage() {
   const [syncing, setSyncing] = useState(false);
   const [syncStatus, setSyncStatus] = useState(null);
   const [error, setError] = useState("");
+  const [procesamientoOmitido, setProcesamientoOmitido] = useState(false);
+
+  const [categoriaSeleccionada, setCategoriaSeleccionada] = useState(null);
+  const [empleadosCategoria, setEmpleadosCategoria] = useState([]);
+  const [loadingCategoria, setLoadingCategoria] = useState(false);
+
+  async function toggleCategoria(estatus) {
+    if (categoriaSeleccionada === estatus) {
+      setCategoriaSeleccionada(null);
+      setEmpleadosCategoria([]);
+      return;
+    }
+    setCategoriaSeleccionada(estatus);
+    setLoadingCategoria(true);
+    try {
+      const hoy = new Date().toISOString().split("T")[0];
+      const result = await asistenciaApi.listarDiaria({ fecha: hoy, estatus, limit: 100 });
+      setEmpleadosCategoria(result?.items ?? result ?? []);
+    } catch {
+      setEmpleadosCategoria([]);
+    } finally {
+      setLoadingCategoria(false);
+    }
+  }
 
   async function loadDashboard() {
     try {
       setLoading(true);
       setError("");
+
+      // El motor solo genera FALTA definitiva para un empleado sin
+      // marcaciones una vez que su jornada programada ya cerró
+      // (Contrato §15: mientras datetime.now() < salida_programada la
+      // fila ni siquiera se escribe). Sin procesar "hoy" antes de leer
+      // el resumen, el Dashboard mostraba una foto incompleta: solo
+      // los empleados cuya jornada ya se había (re)procesado después de
+      // su cierre aparecían como falta/completo; el resto (jornada ya
+      // cerrada pero nunca reprocesada desde entonces) simplemente no
+      // tenía fila y desaparecía de los conteos.
+      //
+      // Requiere alcance TOTAL + editar sobre ASISTENCIA; si el usuario
+      // no lo tiene (p. ej. Supervisor/Empleado viendo su Dashboard),
+      // se omite en silencio y se avisa para no ocultar que los datos
+      // pueden estar desactualizados.
+      try {
+        const hoy = new Date().toISOString().split("T")[0];
+        await asistenciaApi.procesar({ fechaInicio: hoy, fechaFin: hoy });
+        setProcesamientoOmitido(false);
+      } catch {
+        setProcesamientoOmitido(true);
+      }
+
       const data = await dashboardApi.obtenerResumen();
       setDashboard(data);
     } catch (err) {
@@ -128,7 +127,6 @@ function DashboardPage() {
     let procesados = 0;
     let healthError = "";
 
-    // 1. Health check: verificar si el reloj responde
     try {
       const health = await getZkHealth();
       if (health?.ok) {
@@ -137,15 +135,13 @@ function DashboardPage() {
       }
     } catch (err) {
       healthError = err.message || "sin respuesta";
-      // No asumir que está desconectado — puede ser timeout corto. Intentar sync de todas formas.
       setSyncStatus({ step: 2, message: "Health check falló. Intentando sincronización directa..." });
     }
 
-    // 2. Sincronizar marcaciones (intentar siempre, incluso si health falló)
     try {
       const syncResult = await syncZkAttendanceToDb({ limit: 5000 });
       insertados = syncResult?.result?.insertados ?? syncResult?.result?.insertadas ?? 0;
-      relojDisponible = true; // Si llegó hasta aquí, el reloj SÍ respondió
+      relojDisponible = true;
       setSyncStatus({ step: 3, message: `${insertados} marcaciones nuevas sincronizadas. Procesando asistencia...` });
     } catch (syncErr) {
       if (!relojDisponible) {
@@ -155,30 +151,24 @@ function DashboardPage() {
       }
     }
 
-    // 3. Procesar asistencia (últimos 7 días para cubrir marcaciones recientes)
     try {
       const hoy = new Date();
       const hace7dias = new Date(hoy.getTime() - 7 * 24 * 60 * 60 * 1000);
       const fechaFin = hoy.toISOString().split("T")[0];
       const fechaInicio = hace7dias.toISOString().split("T")[0];
-      const processResult = await asistenciaApi.procesar({
-        fechaInicio,
-        fechaFin,
-      });
+      const processResult = await asistenciaApi.procesar({ fechaInicio, fechaFin });
       procesados = processResult?.procesados || processResult?.total_procesados || 0;
       setSyncStatus({ step: 4, message: `Asistencia procesada (${procesados} registros, ${fechaInicio} a ${fechaFin}). Actualizando dashboard...` });
     } catch (procErr) {
       setSyncStatus({ step: 4, message: "Error al procesar: " + (procErr.message || "desconocido") });
     }
 
-    // 4. Recargar dashboard
     try {
       await loadDashboard();
     } catch {
       // loadDashboard maneja su propio error
     }
 
-    // 5. Resultado final
     if (relojDisponible) {
       setSyncStatus({
         step: 5,
@@ -194,27 +184,25 @@ function DashboardPage() {
     }
 
     setSyncing(false);
-
-    setTimeout(() => {
-      setSyncStatus(null);
-    }, 10000);
+    setTimeout(() => setSyncStatus(null), 10000);
   }
 
   useEffect(() => {
     loadDashboard();
   }, []);
 
-  // Métricas principales
   const metrics = useMemo(() => {
     if (!dashboard) return [];
     const empleados = dashboard.empleados ?? {};
     const asistenciaHoy = dashboard.asistencia_hoy ?? {};
     const alertas = dashboard.alertas ?? {};
     const totalHoy = Number(asistenciaHoy.total ?? 0);
+    const diasNoLaboralesHoy = Number(asistenciaHoy.dias_no_laborales ?? 0);
+    const diasLaborablesHoy = totalHoy - diasNoLaboralesHoy;
     const completosHoy = Number(asistenciaHoy.completos ?? 0);
     const retardosHoy = Number(asistenciaHoy.retardos_menores ?? 0) + Number(asistenciaHoy.retardos_mayores ?? 0);
     const faltasHoy = Number(asistenciaHoy.faltas ?? 0);
-    const pctPuntualidad = totalHoy > 0 ? Math.round((completosHoy / totalHoy) * 100) : 0;
+    const pctPuntualidad = Number(asistenciaHoy.pct_puntualidad ?? 0);
 
     return [
       {
@@ -227,7 +215,7 @@ function DashboardPage() {
       {
         title: "Puntualidad hoy",
         value: `${pctPuntualidad}%`,
-        description: `${formatNumber(completosHoy)} puntuales de ${formatNumber(totalHoy)} procesados`,
+        description: `${formatNumber(completosHoy)} puntuales de ${formatNumber(diasLaborablesHoy)} días laborables`,
         icon: CheckCircle2,
         color: "#10b981",
       },
@@ -248,55 +236,12 @@ function DashboardPage() {
     ];
   }, [dashboard]);
 
-  // Datos para BarChart 7 días
-  const barChartData = useMemo(() => {
-    if (!dashboard) return [];
-    return (dashboard.asistencia_ultimos_dias ?? []).map((row) => ({
-      fecha: formatShortDate(row.fecha),
-      Puntuales: Number(row.completos ?? 0),
-      Retardos: Number(row.retardos ?? 0),
-      Faltas: Number(row.faltas ?? 0),
-    }));
-  }, [dashboard]);
-
-  // Datos para PieChart distribución de hoy
-  const pieChartData = useMemo(() => {
-    if (!dashboard) return [];
-    const hoy = dashboard.asistencia_hoy ?? {};
-    const data = [];
-    if (Number(hoy.completos) > 0) data.push({ name: "Puntuales", value: Number(hoy.completos) });
-    const retardos = Number(hoy.retardos_menores ?? 0) + Number(hoy.retardos_mayores ?? 0);
-    if (retardos > 0) data.push({ name: "Retardos", value: retardos });
-    if (Number(hoy.faltas) > 0) data.push({ name: "Faltas", value: Number(hoy.faltas) });
-    return data;
-  }, [dashboard]);
-
-  // Datos para AreaChart tendencia 30 días
-  const tendenciaData = useMemo(() => {
-    if (!dashboard) return [];
-    return (dashboard.tendencia_puntualidad ?? []).map((row) => ({
-      fecha: formatShortDate(row.fecha),
-      Puntualidad: Number(row.pct_puntualidad ?? 0),
-      Asistencia: Number(row.pct_asistencia ?? 0),
-    }));
-  }, [dashboard]);
-
-  // Datos para PieChart incidencias por categoría
-  const incidenciasCatData = useMemo(() => {
-    if (!dashboard) return [];
-    return (dashboard.incidencias_por_categoria ?? []).map((row) => ({
-      name: row.tipo_nombre || row.categoria,
-      value: Number(row.cantidad ?? 0),
-      categoria: row.categoria,
-    }));
-  }, [dashboard]);
-
-  // Rankings
   const topFaltas = dashboard?.top_empleados_faltas ?? [];
-  const topRetardos = dashboard?.top_empleados_retardos ?? [];
   const departamentosIncidencias = dashboard?.departamentos_incidencias ?? [];
   const ultimasMarcaciones = dashboard?.ultimas_marcaciones ?? [];
   const alertas = dashboard?.alertas ?? {};
+
+  const hayAlertas = Object.values(alertas).some((v) => Number(v) > 0);
 
   return (
     <div className="page-stack">
@@ -329,7 +274,7 @@ function DashboardPage() {
 
       {syncStatus && (
         <section className="panel-card">
-          <div className={`sync-status ${syncStatus.error ? 'error' : syncStatus.completed ? 'completed' : 'in-progress'}`}>
+          <div className={`sync-status ${syncStatus.error ? "error" : syncStatus.completed ? "completed" : "in-progress"}`}>
             <div className="sync-status-header">
               {syncStatus.error ? (
                 <AlertTriangle size={20} />
@@ -339,16 +284,18 @@ function DashboardPage() {
                 <RefreshCw size={20} className="spinning" />
               )}
               <h3>
-                {syncStatus.error ? 'Error de sincronización' : 
-                 syncStatus.completed ? 'Sincronización completada' : 
-                 'Sincronizando...'}
+                {syncStatus.error
+                  ? "Error de sincronización"
+                  : syncStatus.completed
+                  ? "Sincronización completada"
+                  : "Sincronizando..."}
               </h3>
             </div>
             <p>{syncStatus.message}</p>
             {!syncStatus.completed && !syncStatus.error && (
               <div className="sync-progress">
-                <div 
-                  className="sync-progress-bar" 
+                <div
+                  className="sync-progress-bar"
                   style={{ width: `${(syncStatus.step / 5) * 100}%` }}
                 />
               </div>
@@ -367,6 +314,22 @@ function DashboardPage() {
         </section>
       )}
 
+      {!error && procesamientoOmitido && (
+        <section className="warning-banner">
+          <AlertTriangle size={22} />
+          <div>
+            <strong>Datos posiblemente desactualizados</strong>
+            <p>
+              Tu rol no tiene permiso para reprocesar la asistencia del día,
+              así que estos números reflejan el último procesamiento
+              disponible, no necesariamente el estado tras el cierre de la
+              jornada de hoy. Pide a un administrador que ejecute
+              &ldquo;Sincronizar ahora&rdquo; o procese asistencia.
+            </p>
+          </div>
+        </section>
+      )}
+
       {loading && !dashboard && (
         <section className="panel-card">
           <div className="empty-state">
@@ -379,7 +342,7 @@ function DashboardPage() {
 
       {dashboard && (
         <>
-          {/* Métricas KPI */}
+          {/* ZONA 1: Hoy — KPIs + Alertas RH */}
           <section className="metrics-grid four-columns">
             {metrics.map((m) => {
               const Icon = m.icon;
@@ -398,230 +361,113 @@ function DashboardPage() {
             })}
           </section>
 
-          {/* Gráficas principales: BarChart + PieChart */}
-          <section className="dashboard-grid">
-            {/* BarChart: Asistencia últimos 7 días */}
-            <article className="panel-card">
-              <div className="panel-header">
-                <div>
-                  <h3>Asistencia últimos 7 días</h3>
-                  <p>Distribución diaria de completas, retardos y faltas.</p>
-                </div>
-                <UserCheck size={22} />
-              </div>
-
-              {barChartData.length > 0 ? (
-                <div className="chart-container">
-                  <BarChart width={500} height={270} data={barChartData} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                    <XAxis dataKey="fecha" tick={{ fontSize: 11 }} />
-                    <YAxis tick={{ fontSize: 11 }} />
-                    <Tooltip
-                      contentStyle={{ borderRadius: 8, fontSize: 12 }}
-                      labelStyle={{ fontWeight: 600 }}
-                    />
-                    <Legend wrapperStyle={{ fontSize: 12 }} />
-                    <Bar dataKey="Puntuales" stackId="a" fill={COLORS.completos} radius={[0, 0, 0, 0]} />
-                    <Bar dataKey="Retardos" stackId="a" fill={COLORS.retardos} />
-                    <Bar dataKey="Faltas" stackId="a" fill={COLORS.faltas} radius={[4, 4, 0, 0]} />
-                  </BarChart>
-                </div>
-              ) : (
-                <div className="empty-state">
-                  <p>Sin datos de asistencia procesada en los últimos 7 días.</p>
-                </div>
-              )}
-            </article>
-
-            {/* PieChart: Distribución de hoy */}
-            <article className="panel-card">
-              <div className="panel-header">
-                <div>
-                  <h3>Distribución de hoy</h3>
-                  <p>Proporción de asistencias por estatus del día actual.</p>
-                </div>
-                <CheckCircle2 size={22} />
-              </div>
-
-              {pieChartData.length > 0 ? (
-                <div className="chart-container">
-                  <PieChart width={400} height={270}>
-                    <Pie
-                      data={pieChartData}
-                      cx="50%"
-                      cy="50%"
-                      innerRadius={55}
-                      outerRadius={95}
-                      dataKey="value"
-                      label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
-                      labelLine={false}
-                    >
-                      {pieChartData.map((_, index) => (
-                        <Cell key={`cell-${index}`} fill={PIE_COLORS[index % PIE_COLORS.length]} />
-                      ))}
-                    </Pie>
-                    <Tooltip formatter={(value) => formatNumber(value)} />
-                    <Legend wrapperStyle={{ fontSize: 12 }} />
-                  </PieChart>
-                </div>
-              ) : (
-                <div className="empty-state">
-                  <p>No hay asistencia procesada hoy. Sincroniza marcaciones y procesa la asistencia.</p>
-                </div>
-              )}
-            </article>
-          </section>
-
-          {/* AreaChart: Tendencia de puntualidad 30 días */}
+          {/* DESGLOSE HOY — clickeable por categoría */}
           <section className="panel-card">
             <div className="panel-header">
               <div>
-                <h3>Tendencia de puntualidad — 30 días</h3>
-                <p>Porcentaje diario de asistencias completas (puntualidad) vs asistencia total (con retardos).</p>
+                <h3>Desglose de hoy</h3>
+                <p>Haz clic en una categoría para ver los empleados.</p>
               </div>
-              <TrendingUp size={22} />
+              <CalendarDays size={22} />
             </div>
 
-            {tendenciaData.length > 0 ? (
-              <div className="chart-container chart-wide">
-                  <AreaChart width={900} height={250} data={tendenciaData} margin={{ top: 10, right: 20, left: -10, bottom: 0 }}>
-                    <defs>
-                      <linearGradient id="gradPuntualidad" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor={COLORS.puntualidad} stopOpacity={0.3} />
-                        <stop offset="95%" stopColor={COLORS.puntualidad} stopOpacity={0} />
-                      </linearGradient>
-                      <linearGradient id="gradAsistencia" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor={COLORS.asistencia} stopOpacity={0.3} />
-                        <stop offset="95%" stopColor={COLORS.asistencia} stopOpacity={0} />
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                    <XAxis
-                      dataKey="fecha"
-                      tick={{ fontSize: 10 }}
-                      interval={Math.floor(tendenciaData.length / 8)}
-                    />
-                    <YAxis tick={{ fontSize: 11 }} domain={[0, 100]} unit="%" />
-                    <Tooltip
-                      contentStyle={{ borderRadius: 8, fontSize: 12 }}
-                      formatter={(value) => `${value}%`}
-                    />
-                    <Legend wrapperStyle={{ fontSize: 12 }} />
-                    <Area
-                      type="monotone"
-                      dataKey="Puntualidad"
-                      stroke={COLORS.puntualidad}
-                      fill="url(#gradPuntualidad)"
-                      strokeWidth={2}
-                    />
-                    <Area
-                      type="monotone"
-                      dataKey="Asistencia"
-                      stroke={COLORS.asistencia}
-                      fill="url(#gradAsistencia)"
-                      strokeWidth={2}
-                    />
-                  </AreaChart>
-              </div>
-            ) : (
-              <div className="empty-state">
-                <p>Sin datos suficientes para mostrar tendencia.</p>
-              </div>
-            )}
+            {(() => {
+              const hoy = dashboard.asistencia_hoy ?? {};
+              const categorias = CATEGORIAS_HOY.filter(
+                (cat) => Number(hoy[cat.campo] ?? 0) > 0
+              );
+              if (categorias.length === 0) {
+                return (
+                  <div className="empty-state">
+                    <CalendarDays size={32} />
+                    <p>Sin asistencia procesada hoy. Sincroniza y procesa para ver el desglose.</p>
+                  </div>
+                );
+              }
+              return (
+                <>
+                  <div className="hoy-categorias">
+                    {categorias.map((cat) => (
+                      <button
+                        key={cat.estatus}
+                        type="button"
+                        className={`categoria-card categoria-card--${cat.variant}${categoriaSeleccionada === cat.estatus ? " categoria-card--active" : ""}`}
+                        onClick={() => toggleCategoria(cat.estatus)}
+                      >
+                        <strong>{formatNumber(Number(hoy[cat.campo] ?? 0))}</strong>
+                        <span>{cat.label}</span>
+                      </button>
+                    ))}
+                  </div>
+
+                  {categoriaSeleccionada && (
+                    <div className="categoria-empleados">
+                      {loadingCategoria ? (
+                        <div className="empty-state">
+                          <RefreshCw size={28} className="spinning" />
+                          <p>Cargando empleados...</p>
+                        </div>
+                      ) : empleadosCategoria.length === 0 ? (
+                        <div className="empty-state">
+                          <CheckCircle2 size={28} />
+                          <p>Sin empleados en esta categoría.</p>
+                        </div>
+                      ) : (
+                        <div className="simple-table">
+                          <table>
+                            <thead>
+                              <tr>
+                                <th>Empleado</th>
+                                <th>Departamento</th>
+                                <th>Código</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {empleadosCategoria.map((row) => (
+                                <tr key={row.asistencia_id ?? row.empleado_id}>
+                                  <td>
+                                    <div className="employee-cell">
+                                      <div className="employee-avatar">
+                                        {(row.nombre_completo || "?").charAt(0)}
+                                      </div>
+                                      <strong>{safeText(row.nombre_completo)}</strong>
+                                    </div>
+                                  </td>
+                                  <td>{safeText(row.unidad_nombre, "—")}</td>
+                                  <td>{safeText(row.codigo_empleado, "—")}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </>
+              );
+            })()}
           </section>
 
-          {/* Incidencias por categoría + Alertas RH */}
-          <section className="dashboard-grid">
-            {/* PieChart incidencias por categoría */}
-            <article className="panel-card">
-              <div className="panel-header">
-                <div>
-                  <h3>Incidencias por tipo — 30 días</h3>
-                  <p>Distribución de incidencias registradas por categoría.</p>
-                </div>
-                <AlertTriangle size={22} />
+          <section className="panel-card">
+            <div className="panel-header">
+              <div>
+                <h3>Alertas RH</h3>
+                <p>Situaciones que requieren atención operativa.</p>
               </div>
+              <AlertTriangle size={22} />
+            </div>
 
-              {incidenciasCatData.length > 0 ? (
-                <div className="chart-container">
-                  <PieChart width={400} height={250}>
-                    <Pie
-                      data={incidenciasCatData}
-                      cx="50%"
-                      cy="50%"
-                      outerRadius={85}
-                      dataKey="value"
-                      label={({ name, value }) => `${name}: ${value}`}
-                      labelLine={true}
-                    >
-                      {incidenciasCatData.map((entry, index) => (
-                        <Cell
-                          key={`cat-${index}`}
-                          fill={INCIDENCIA_COLORS[entry.categoria] || PIE_COLORS[index % PIE_COLORS.length]}
-                        />
-                      ))}
-                    </Pie>
-                    <Tooltip formatter={(value) => formatNumber(value)} />
-                  </PieChart>
-                </div>
-              ) : (
-                <div className="empty-state">
-                  <p>Sin incidencias registradas en los últimos 30 días.</p>
-                </div>
-              )}
-            </article>
-
-            {/* Alertas RH */}
-            <article className="panel-card">
-              <div className="panel-header">
-                <div>
-                  <h3>Alertas RH</h3>
-                  <p>Situaciones que requieren atención operativa.</p>
-                </div>
-                <AlertTriangle size={22} />
-              </div>
-
-              <div className="alert-list">
-                {Number(alertas.empleados_sin_zk) > 0 && (
-                  <div className="alert-item warning">
-                    <Users size={18} />
-                    <div>
-                      <strong>{formatNumber(alertas.empleados_sin_zk)}</strong>
-                      <span>Empleados sin User ID ZKTeco</span>
-                    </div>
-                  </div>
-                )}
-
-                {Number(alertas.empleados_sin_horario) > 0 && (
-                  <div className="alert-item warning">
-                    <Clock size={18} />
-                    <div>
-                      <strong>{formatNumber(alertas.empleados_sin_horario)}</strong>
-                      <span>Empleados sin horario vigente</span>
-                    </div>
-                  </div>
-                )}
-
-                {Number(alertas.marcaciones_sin_empleado_hoy) > 0 && (
-                  <div className="alert-item danger">
-                    <Fingerprint size={18} />
-                    <div>
-                      <strong>{formatNumber(alertas.marcaciones_sin_empleado_hoy)}</strong>
-                      <span>Marcaciones sin empleado hoy</span>
-                    </div>
-                  </div>
-                )}
-
+            {hayAlertas ? (
+              <div className="alert-list alert-list--horizontal">
                 {Number(alertas.faltas_hoy) > 0 && (
                   <div className="alert-item danger">
                     <AlertTriangle size={18} />
                     <div>
                       <strong>{formatNumber(alertas.faltas_hoy)}</strong>
-                      <span>Faltas registradas hoy</span>
+                      <span>Faltas hoy</span>
                     </div>
                   </div>
                 )}
-
                 {Number(alertas.retardos_mayores_hoy) > 0 && (
                   <div className="alert-item warning">
                     <Clock size={18} />
@@ -631,126 +477,107 @@ function DashboardPage() {
                     </div>
                   </div>
                 )}
-
                 {Number(alertas.asistencias_revision_hoy) > 0 && (
                   <div className="alert-item info">
                     <CheckCircle2 size={18} />
                     <div>
                       <strong>{formatNumber(alertas.asistencias_revision_hoy)}</strong>
-                      <span>Asistencias requieren revisión</span>
+                      <span>Requieren revisión</span>
                     </div>
                   </div>
                 )}
-
-                {Object.values(alertas).every((v) => Number(v) === 0) && (
-                  <div className="empty-state">
-                    <CheckCircle2 size={32} />
-                    <p>Sin alertas activas. Todo en orden.</p>
+                {Number(alertas.marcaciones_sin_empleado_hoy) > 0 && (
+                  <div className="alert-item danger">
+                    <Fingerprint size={18} />
+                    <div>
+                      <strong>{formatNumber(alertas.marcaciones_sin_empleado_hoy)}</strong>
+                      <span>Marcaciones sin empleado</span>
+                    </div>
+                  </div>
+                )}
+                {Number(alertas.empleados_sin_horario) > 0 && (
+                  <div className="alert-item warning">
+                    <Clock size={18} />
+                    <div>
+                      <strong>{formatNumber(alertas.empleados_sin_horario)}</strong>
+                      <span>Sin horario vigente</span>
+                    </div>
+                  </div>
+                )}
+                {Number(alertas.empleados_sin_zk) > 0 && (
+                  <div className="alert-item warning">
+                    <Users size={18} />
+                    <div>
+                      <strong>{formatNumber(alertas.empleados_sin_zk)}</strong>
+                      <span>Sin User ID ZKTeco</span>
+                    </div>
                   </div>
                 )}
               </div>
-            </article>
+            ) : (
+              <div className="empty-state">
+                <CheckCircle2 size={32} />
+                <p>Sin alertas activas. Todo en orden.</p>
+              </div>
+            )}
           </section>
 
-          {/* Rankings: Top faltas + Top retardos */}
-          <section className="dashboard-grid">
-            <article className="panel-card">
-              <div className="panel-header">
-                <div>
-                  <h3>Top faltas — 30 días</h3>
-                  <p>Empleados con más faltas registradas.</p>
-                </div>
-                <AlertTriangle size={22} />
+          {/* Top faltas — 30 días */}
+          <section className="panel-card">
+            <div className="panel-header">
+              <div>
+                <h3>Top faltas — 30 días</h3>
+                <p>Empleados con más faltas.</p>
               </div>
+              <AlertTriangle size={22} />
+            </div>
 
-              {topFaltas.length === 0 ? (
-                <div className="empty-state">
-                  <CheckCircle2 size={32} />
-                  <p>Sin faltas en los últimos 30 días.</p>
-                </div>
-              ) : (
-                <div className="ranking-list">
-                  {topFaltas.map((row, index) => (
-                    <div className="ranking-row" key={row.empleado_id}>
-                      <div className="ranking-position">{index + 1}</div>
-                      <div className="ranking-content">
-                        <div className="ranking-header">
-                          <div>
-                            <strong>{safeText(row.empleado_nombre)}</strong>
-                            <span>{safeText(row.codigo_empleado)}</span>
-                          </div>
-                          <strong className="ranking-value danger">{row.faltas}</strong>
+            {topFaltas.length === 0 ? (
+              <div className="empty-state">
+                <CheckCircle2 size={28} />
+                <p>Sin faltas en 30 días.</p>
+              </div>
+            ) : (
+              <div className="ranking-list">
+                {topFaltas.map((row, index) => (
+                  <div className="ranking-row" key={row.empleado_id}>
+                    <div className="ranking-position">{index + 1}</div>
+                    <div className="ranking-content">
+                      <div className="ranking-header">
+                        <div>
+                          <strong>{safeText(row.empleado_nombre)}</strong>
+                          <span>{safeText(row.codigo_empleado)}</span>
                         </div>
-                        <div className="ranking-track">
-                          <div
-                            className="ranking-bar absence"
-                            style={{ width: `${Math.max((row.faltas / (topFaltas[0]?.faltas || 1)) * 100, 8)}%` }}
-                          />
-                        </div>
+                        <strong className="ranking-value danger">{row.faltas}</strong>
+                      </div>
+                      <div className="ranking-track">
+                        <div
+                          className="ranking-bar absence"
+                          style={{ width: `${Math.max((row.faltas / (topFaltas[0]?.faltas || 1)) * 100, 8)}%` }}
+                        />
                       </div>
                     </div>
-                  ))}
-                </div>
-              )}
-            </article>
-
-            <article className="panel-card">
-              <div className="panel-header">
-                <div>
-                  <h3>Top retardos — 30 días</h3>
-                  <p>Empleados con más retardos y puntos acumulados.</p>
-                </div>
-                <Clock size={22} />
+                  </div>
+                ))}
               </div>
-
-              {topRetardos.length === 0 ? (
-                <div className="empty-state">
-                  <CheckCircle2 size={32} />
-                  <p>Sin retardos en los últimos 30 días.</p>
-                </div>
-              ) : (
-                <div className="ranking-list">
-                  {topRetardos.map((row, index) => (
-                    <div className="ranking-row" key={row.empleado_id}>
-                      <div className="ranking-position">{index + 1}</div>
-                      <div className="ranking-content">
-                        <div className="ranking-header">
-                          <div>
-                            <strong>{safeText(row.empleado_nombre)}</strong>
-                            <span>{safeText(row.codigo_empleado)}</span>
-                          </div>
-                          <strong className="ranking-value warning">{row.total_retardos}</strong>
-                        </div>
-                        <div className="ranking-track">
-                          <div
-                            className="ranking-bar delay"
-                            style={{ width: `${Math.max((row.total_retardos / (topRetardos[0]?.total_retardos || 1)) * 100, 8)}%` }}
-                          />
-                        </div>
-                        <div className="ranking-meta">
-                          <span>Menores: {row.retardos_menores}</span>
-                          <span>Mayores: {row.retardos_mayores}</span>
-                          <span>Puntos: {row.puntos_generados}</span>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </article>
+            )}
           </section>
 
-          {/* Departamentos con incidencias */}
-          {departamentosIncidencias.length > 0 && (
-            <section className="panel-card">
-              <div className="panel-header">
-                <div>
-                  <h3>Departamentos con más incidencias — 30 días</h3>
-                  <p>Unidades con mayor concentración de faltas, retardos y omisiones.</p>
-                </div>
-                <Users size={22} />
+          <section className="panel-card">
+            <div className="panel-header">
+              <div>
+                <h3>Departamentos con más incidencias — 30 días</h3>
+                <p>Unidades con mayor concentración de faltas, retardos y omisiones.</p>
               </div>
+              <Users size={22} />
+            </div>
 
+            {departamentosIncidencias.length === 0 ? (
+              <div className="empty-state">
+                <CheckCircle2 size={32} />
+                <p>Sin incidencias por departamento en los últimos 30 días.</p>
+              </div>
+            ) : (
               <div className="department-incidence-list">
                 {departamentosIncidencias.map((row, index) => (
                   <div
@@ -786,10 +613,10 @@ function DashboardPage() {
                   </div>
                 ))}
               </div>
-            </section>
-          )}
+            )}
+          </section>
 
-          {/* Últimas marcaciones */}
+          {/* ZONA 4: Actividad reciente */}
           <section className="panel-card">
             <div className="panel-header">
               <div>
@@ -810,7 +637,6 @@ function DashboardPage() {
                   <thead>
                     <tr>
                       <th>Empleado</th>
-                      <th>User ID ZK</th>
                       <th>Fecha y hora</th>
                       <th>Evento</th>
                       <th>Dispositivo</th>
@@ -830,7 +656,6 @@ function DashboardPage() {
                             </div>
                           </div>
                         </td>
-                        <td>{safeText(row.zk_user_id, "—")}</td>
                         <td>{formatDateTime(row.fecha_hora)}</td>
                         <td>
                           <span className="badge neutral">{getPunchLabel(row)}</span>

@@ -8,7 +8,7 @@ function LoginPage() {
   const navigate = useNavigate();
   const location = useLocation();
 
-  const { login, isAuthenticated, loading: authLoading } = useAuth();
+  const { login, user, isAuthenticated, loading: authLoading } = useAuth();
 
   const [correo, setCorreo] = useState("");
   const [password, setPassword] = useState("");
@@ -19,9 +19,12 @@ function LoginPage() {
 
   useEffect(() => {
     if (!authLoading && isAuthenticated) {
-      navigate("/dashboard", { replace: true });
+      navigate(
+        user?.requiereCambioPassword ? "/change-password" : "/dashboard",
+        { replace: true }
+      );
     }
-  }, [authLoading, isAuthenticated, navigate]);
+  }, [authLoading, isAuthenticated, user, navigate]);
 
   async function handleSubmit(event) {
     event.preventDefault();
@@ -30,12 +33,16 @@ function LoginPage() {
     setSubmitting(true);
 
     try {
-      await login({
+      const response = await login({
         correo,
         password,
       });
 
-      navigate(redirectTo, { replace: true });
+      if (response?.user?.requiere_cambio_password) {
+        navigate("/change-password", { replace: true });
+      } else {
+        navigate(redirectTo, { replace: true });
+      }
     } catch (err) {
       setError(err.message || "No fue posible iniciar sesión.");
     } finally {

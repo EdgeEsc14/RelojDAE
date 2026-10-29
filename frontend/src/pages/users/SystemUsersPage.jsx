@@ -26,6 +26,7 @@ import {
   actualizarUsuario,
   desactivarUsuario,
 } from "../../api/usuariosApi";
+import { empleadosApi } from "../../api/empleadosApi";
 
 
 function getStatusClass(status) {
@@ -61,6 +62,7 @@ function SystemUsersPage() {
   // Data state
   const [usuarios, setUsuarios] = useState([]);
   const [roles, setRoles] = useState([]);
+  const [empleadosActivos, setEmpleadosActivos] = useState([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -89,6 +91,10 @@ function SystemUsersPage() {
   const [formError, setFormError] = useState("");
   const [formLoading, setFormLoading] = useState(false);
 
+  // Contraseña temporal generada por el backend al crear una cuenta.
+  // Solo se muestra una vez, inmediatamente después de la creación.
+  const [tempPasswordInfo, setTempPasswordInfo] = useState(null);
+
   // Load roles on mount
   useEffect(() => {
     async function loadRoles() {
@@ -100,6 +106,23 @@ function SystemUsersPage() {
       }
     }
     loadRoles();
+  }, []);
+
+  // Load active employees on mount (para vincular al crear una cuenta;
+  // solo empleados ACTIVO son elegibles según la validación del backend).
+  useEffect(() => {
+    async function loadEmpleadosActivos() {
+      try {
+        const data = await empleadosApi.listar({
+          estatus: "ACTIVO",
+          limit: 500,
+        });
+        setEmpleadosActivos(data.items || []);
+      } catch (err) {
+        console.error("Error cargando empleados:", err.message);
+      }
+    }
+    loadEmpleadosActivos();
   }, []);
 
   // Load users when filters/page change
@@ -222,14 +245,10 @@ function SystemUsersPage() {
 
         await actualizarUsuario(editingUser.id, updatePayload);
       } else {
-        // Create
+        // Create. La contraseña temporal la genera el backend — nunca se
+        // captura ni se envía desde este formulario.
         if (!formData.correo_electronico) {
           setFormError("El correo electrónico es obligatorio.");
-          setFormLoading(false);
-          return;
-        }
-        if (!formData.password || formData.password.length < 8) {
-          setFormError("La contraseña debe tener al menos 8 caracteres.");
           setFormLoading(false);
           return;
         }
@@ -241,7 +260,6 @@ function SystemUsersPage() {
 
         const createPayload = {
           correo_electronico: formData.correo_electronico,
-          password: formData.password,
           rol_id: Number(formData.rol_id),
           requiere_cambio_password: formData.requiere_cambio_password,
         };
@@ -253,7 +271,19 @@ function SystemUsersPage() {
           createPayload.empleado_id = Number(formData.empleado_id);
         }
 
-        await crearUsuario(createPayload);
+        const creado = await crearUsuario(createPayload);
+
+        closeModal();
+        loadUsuarios();
+
+        // La contraseña temporal solo viaja en esta respuesta: no se puede
+        // volver a consultar después.
+        setTempPasswordInfo({
+          correo: creado.correo_electronico,
+          password: creado.password_temporal,
+        });
+        setFormLoading(false);
+        return;
       }
 
       closeModal();
@@ -673,26 +703,31 @@ function SystemUsersPage() {
                   id="user-email"
                   type="email"
                   required
-                  placeholder="usuario@dominio.com"
+                  placeholder="correo@esc.com"
                   value={formData.correo_electronico}
                   onChange={(e) => handleFormChange("correo_electronico", e.target.value)}
                 />
               </div>
 
-              <div className="form-field">
-                <label htmlFor="user-password">
-                  {editingUser ? "Nueva contraseña (dejar vacío para no cambiar)" : "Contraseña *"}
-                </label>
-                <input
-                  id="user-password"
-                  type="password"
-                  placeholder={editingUser ? "Sin cambios" : "Mínimo 8 caracteres"}
-                  required={!editingUser}
-                  minLength={editingUser ? 0 : 8}
-                  value={formData.password}
-                  onChange={(e) => handleFormChange("password", e.target.value)}
-                />
-              </div>
+              {editingUser ? (
+                <div className="form-field">
+                  <label htmlFor="user-password">
+                    Nueva contraseña (dejar vacío para no cambiar)
+                  </label>
+                  <input
+                    id="user-password"
+                    type="password"
+                    placeholder="Sin cambios"
+                    minLength={8}
+                    value={formData.password}
+                    onChange={(e) => handleFormChange("password", e.target.value)}
+                  />
+                </div>
+              ) : (
+                <p className="form-hint">
+                  Contraseña temporal, se deberá cambiar después.
+                </p>
+              )}
 
               <div className="form-field">
                 <label htmlFor="user-role">Rol *</label>
@@ -716,7 +751,6 @@ function SystemUsersPage() {
                 <input
                   id="user-username"
                   type="text"
-                  placeholder="Se genera del correo si se deja vacío"
                   value={formData.nombre_usuario}
                   onChange={(e) => handleFormChange("nombre_usuario", e.target.value)}
                 />
@@ -724,14 +758,23 @@ function SystemUsersPage() {
 
               {!editingUser && (
                 <div className="form-field">
-                  <label htmlFor="user-empleado">ID de empleado (opcional)</label>
-                  <input
+                  <label htmlFor="user-empleado">Empleado a vincular (opcional)</label>
+                  <select
                     id="user-empleado"
-                    type="number"
-                    placeholder="Vincular a empleado existente"
                     value={formData.empleado_id}
                     onChange={(e) => handleFormChange("empleado_id", e.target.value)}
-                  />
+                  >
+                    <option value="">Sin vincular</option>
+                    {empleadosActivos.map((empleado) => (
+                      <option key={empleado.id} value={empleado.id}>
+                        {empleado.nombre_completo} — {empleado.codigo_empleado} (
+                        {empleado.zk_user_id
+                          ? `reloj: ${empleado.zk_user_id}`
+                          : "sin usuario de reloj"}
+                        )
+                      </option>
+                    ))}
+                  </select>
                 </div>
               )}
 
@@ -787,6 +830,45 @@ function SystemUsersPage() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {tempPasswordInfo && (
+        <div className="modal-overlay">
+          <div className="modal-content">
+            <div className="modal-header">
+              <h2>Cuenta creada</h2>
+            </div>
+            <div className="modal-body">
+              <p>
+                Cuenta creada para <strong>{tempPasswordInfo.correo}</strong>.
+              </p>
+              <p>
+                Contraseña temporal (solo se muestra una vez, cópiala ahora):
+              </p>
+              <div className="form-field">
+                <input
+                  type="text"
+                  readOnly
+                  value={tempPasswordInfo.password}
+                  onFocus={(e) => e.target.select()}
+                />
+              </div>
+              <p className="form-hint">
+                El usuario deberá cambiarla en su primer inicio de sesión.
+                No podrás volver a consultarla después de cerrar este aviso.
+              </p>
+              <div className="modal-footer">
+                <button
+                  className="primary-button"
+                  type="button"
+                  onClick={() => setTempPasswordInfo(null)}
+                >
+                  Entendido, cerrar
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
