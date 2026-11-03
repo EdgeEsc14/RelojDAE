@@ -1,5 +1,8 @@
 import { useEffect, useState } from "react";
 import { Link, useParams, useNavigate } from "react-router-dom";
+import { useAuth } from "../../context/AuthContext";
+import { getModulePermissions } from "../../utils/permissions";
+import { MODULES } from "../../constants/permissions";
 import {
   ArrowLeft,
   Calendar,
@@ -66,6 +69,10 @@ function IncidentDetailPage() {
   const { incidentId } = useParams();
   const navigate = useNavigate();
 
+  const { user } = useAuth();
+  const incidenciasPerms = getModulePermissions(user?.role, MODULES.INCIDENCIAS);
+  const canApprove = incidenciasPerms.canApprove;
+
   const [incidencia, setIncidencia] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -112,6 +119,7 @@ function IncidentDetailPage() {
   }
 
   const canReview =
+    canApprove &&
     incidencia &&
     (incidencia.estatus === "PENDIENTE" || incidencia.estatus === "SIN_JUSTIFICAR");
 

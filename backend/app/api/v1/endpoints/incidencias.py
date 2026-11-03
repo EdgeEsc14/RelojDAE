@@ -131,13 +131,20 @@ def get_incidencia(
 def post_crear_incidencia(
     payload: IncidenciaCreateRequest,
     db: Annotated[Session, Depends(get_db)],
-    _access_scope: Annotated[
+    access_scope: Annotated[
         AccessScope,
         Depends(require_module_access("INCIDENCIAS", "crear")),
     ],
     current_user: Annotated[dict, Depends(get_current_user)],
 ) -> dict:
     """Crea una incidencia manual."""
+
+    if access_scope.data_scope == "PROPIO":
+        if access_scope.employee_id is None or payload.empleado_id != access_scope.employee_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Solo puedes registrar incidencias para tu propio perfil.",
+            )
 
     try:
         result = crear_incidencia(

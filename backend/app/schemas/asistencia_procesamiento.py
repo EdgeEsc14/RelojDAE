@@ -36,7 +36,10 @@ class ProcesarAsistenciaResponse(BaseModel):
     fecha_fin: str
     registros_encontrados: int
     procesadas: int
+    faltas_generadas: int = 0
+    dias_no_laborables: int = 0
     errores: list[dict]
+    conflictos_identidad_zk: list[dict] = []
     # La acumulación de puntos corre después de procesar asistencia y
     # nunca debe convertir un procesamiento exitoso en un 500: si falla
     # (p. ej. periodo de evaluación sin resolver), se reporta aquí en

@@ -40,11 +40,19 @@ export async function apiRequest(path, options = {}) {
   }
 
   if (!response.ok) {
-    const message =
-      data?.detail?.message ??
-      data?.detail ??
-      data?.message ??
-      `Error HTTP ${response.status} al consumir ${path}`;
+    let message;
+    if (Array.isArray(data?.detail)) {
+      // Errores de validación Pydantic (422): extraer solo el texto legible
+      message = data.detail
+        .map((e) => e.msg ?? e.message ?? JSON.stringify(e))
+        .join("; ");
+    } else {
+      message =
+        data?.detail?.message ??
+        data?.detail ??
+        data?.message ??
+        `Error HTTP ${response.status} al consumir ${path}`;
+    }
 
     throw new Error(
       typeof message === "string" ? message : JSON.stringify(message)

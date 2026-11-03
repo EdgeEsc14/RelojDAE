@@ -215,12 +215,21 @@ function AttendancePage() {
   async function handleProcess(e) {
     e.preventDefault();
     if (!processStartDate || !processEndDate) { setProcessError("Selecciona ambas fechas."); return; }
-    if (processStartDate > processEndDate) { setProcessError("Fecha inicio mayor que fin."); return; }
+    if (processStartDate > processEndDate) { setProcessError("La fecha inicio no puede ser mayor que la fecha fin."); return; }
+    const dias = Math.round((new Date(processEndDate) - new Date(processStartDate)) / 86400000) + 1;
+    if (dias > 31) { setProcessError(`El rango seleccionado es de ${dias} días. El máximo permitido es 31 días por solicitud.`); return; }
     setIsProcessing(true); setProcessError(""); setProcessResult(null);
     try {
       const res = await asistenciaApi.procesar({ fechaInicio: processStartDate, fechaFin: processEndDate });
       setProcessResult(res);
-      setAttendanceDate(processEndDate);
+      // Si processEndDate es hoy y hay registros omitidos (turno abierto sin entradas),
+      // mostrar el día anterior que sí tiene datos procesados.
+      const today = getTodayDateInputValue();
+      const omitidos = (res.registros_encontrados ?? 0) - (res.procesadas ?? 0);
+      const dateToShow = (processEndDate === today && omitidos > 0)
+        ? (() => { const d = new Date(processEndDate + "T00:00:00"); d.setDate(d.getDate() - 1); return d.toISOString().slice(0, 10); })()
+        : processEndDate;
+      setAttendanceDate(dateToShow);
       setReloadToken((t) => t + 1);
     } catch (err) { setProcessError(err.message || "Error al procesar."); }
     finally { setIsProcessing(false); }
@@ -343,7 +352,37 @@ function AttendancePage() {
             </button>
           </form>
           {processError && <p style={{ color: "var(--color-danger-text)", marginTop: "8px" }}>{processError}</p>}
-          {processResult && <p style={{ color: "var(--color-success-text)", marginTop: "8px" }}>Procesado: {processResult.registros_encontrados ?? processResult.procesados ?? 0} registros.</p>}
+          {processResult && (
+            <div style={{ marginTop: "8px" }}>
+              <p style={{ color: "var(--color-success-text)" }}>
+                Procesamiento completado — {processResult.procesadas ?? 0} registro(s) guardado(s)
+                {processResult.faltas_generadas > 0 && `, ${processResult.faltas_generadas} falta(s)`}
+                .
+              </p>
+              {(processResult.registros_encontrados ?? 0) > (processResult.procesadas ?? 0) && (
+                <p style={{ color: "var(--color-warning-text, #b45309)", fontSize: "13px", marginTop: "4px" }}>
+                  {(processResult.registros_encontrados - (processResult.procesadas ?? 0))} registro(s) omitido(s) — turno en curso sin marcaciones o error de configuración.
+                </p>
+              )}
+              {processResult.errores?.length > 0 && (
+                <details style={{ marginTop: "8px", fontSize: "13px" }}>
+                  <summary style={{ color: "var(--color-danger-text)", cursor: "pointer" }}>
+                    {processResult.errores.length} error(es) de procesamiento
+                  </summary>
+                  <ul style={{ marginTop: "6px", paddingLeft: "16px", color: "var(--color-danger-text)" }}>
+                    {processResult.errores.slice(0, 10).map((e, i) => (
+                      <li key={i} style={{ marginBottom: "4px" }}>
+                        <strong>{e.fecha}</strong>{e.empleado_id ? ` · Emp. ${e.empleado_id}` : ""}: {e.error}
+                      </li>
+                    ))}
+                    {processResult.errores.length > 10 && (
+                      <li>… y {processResult.errores.length - 10} más.</li>
+                    )}
+                  </ul>
+                </details>
+              )}
+            </div>
+          )}
         </section>
       )}
 

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   AlertTriangle,
@@ -6,18 +6,26 @@ import {
   ChevronLeft,
   ChevronRight,
   Clock,
-  Download,
   Eye,
   FileWarning,
   Plus,
   Search,
   SlidersHorizontal,
   X,
-  XCircle,
 } from "lucide-react";
 
 import PageHeader from "../../components/layout/PageHeader";
-import { getIncidencias, getContadores } from "../../api/incidenciasApi";
+import { getIncidencias, getContadores, crearIncidencia } from "../../api/incidenciasApi";
+import { empleadosApi } from "../../api/empleadosApi";
+import { catalogosApi } from "../../api/catalogosApi";
+import { useAuth } from "../../context/AuthContext";
+import { getModulePermissions } from "../../utils/permissions";
+import { MODULES } from "../../constants/permissions";
+import { ROLES } from "../../constants/roles";
+
+function getTodayDateInputValue() {
+  return new Date().toISOString().slice(0, 10);
+}
 
 function getStatusClass(estatus) {
   const s = (estatus || "").toUpperCase();
@@ -63,6 +71,10 @@ function formatDate(value) {
 }
 
 function IncidentsPage() {
+  const { user } = useAuth();
+  const incidenciasPerms = getModulePermissions(user?.role, MODULES.INCIDENCIAS);
+  const canCreate = incidenciasPerms.canCreate;
+
   const [incidencias, setIncidencias] = useState([]);
   const [total, setTotal] = useState(0);
   const [contadores, setContadores] = useState({});
@@ -77,6 +89,20 @@ function IncidentsPage() {
   // Pagination
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
+
+  // Modal nueva incidencia
+  const [showModal, setShowModal] = useState(false);
+  const [modalEmpleados, setModalEmpleados] = useState([]);
+  const [modalTipos, setModalTipos] = useState([]);
+  const [modalBusqEmpleado, setModalBusqEmpleado] = useState("");
+  const [modalEmpleadoId, setModalEmpleadoId] = useState("");
+  const [modalTipoId, setModalTipoId] = useState("");
+  const [modalFecha, setModalFecha] = useState(getTodayDateInputValue());
+  const [modalDescripcion, setModalDescripcion] = useState("");
+  const [modalLoading, setModalLoading] = useState(false);
+  const [modalError, setModalError] = useState("");
+  const [modalSuccess, setModalSuccess] = useState("");
+  const modalLoadedRef = useRef(false);
 
   useEffect(() => {
     loadContadores();
@@ -129,6 +155,77 @@ function IncidentsPage() {
     setPage(1);
   }
 
+  const isEmpleado = user?.role === ROLES.EMPLEADO;
+
+  async function openModal() {
+    setModalTipoId("");
+    setModalFecha(getTodayDateInputValue());
+    setModalDescripcion("");
+    setModalBusqEmpleado("");
+    setModalError("");
+    setModalSuccess("");
+    if (isEmpleado) {
+      setModalEmpleadoId(String(user.empleadoId ?? ""));
+    } else {
+      setModalEmpleadoId("");
+    }
+    setShowModal(true);
+    if (modalLoadedRef.current) return;
+    try {
+      const requests = isEmpleado
+        ? [Promise.resolve(null), catalogosApi.listarTiposIncidencia()]
+        : [empleadosApi.listar({ estatus: "ACTIVO", limit: 200 }), catalogosApi.listarTiposIncidencia()];
+      const [empRes, tiposRes] = await Promise.all(requests);
+      if (!isEmpleado) {
+        const emps = empRes?.items ?? empRes ?? [];
+        setModalEmpleados(emps);
+      }
+      const tipos = Array.isArray(tiposRes) ? tiposRes : (tiposRes?.items ?? []);
+      setModalTipos(tipos.filter((t) => t.activo));
+      modalLoadedRef.current = true;
+    } catch {
+      setModalError("No se pudieron cargar los catálogos. Intenta de nuevo.");
+    }
+  }
+
+  function closeModal() {
+    setShowModal(false);
+  }
+
+  async function handleCreateIncidencia(e) {
+    e.preventDefault();
+    if (!modalEmpleadoId) { setModalError("Selecciona un empleado."); return; }
+    if (!modalTipoId) { setModalError("Selecciona un tipo de incidencia."); return; }
+    if (!modalFecha) { setModalError("Selecciona una fecha."); return; }
+    setModalLoading(true);
+    setModalError("");
+    try {
+      await crearIncidencia({
+        empleado_id: Number(modalEmpleadoId),
+        tipo_incidencia_id: Number(modalTipoId),
+        fecha: modalFecha,
+        descripcion: modalDescripcion.trim() || null,
+        puntos_originales: 0,
+      });
+      setModalSuccess("Incidencia registrada correctamente.");
+      setTimeout(() => {
+        setShowModal(false);
+        loadIncidencias();
+        loadContadores();
+      }, 1200);
+    } catch (err) {
+      setModalError(err.message || "Error al crear la incidencia.");
+    } finally {
+      setModalLoading(false);
+    }
+  }
+
+  const empleadosFiltrados = modalBusqEmpleado.trim()
+    ? modalEmpleados.filter((e) =>
+        `${e.nombre_completo} ${e.codigo_empleado}`.toLowerCase().includes(modalBusqEmpleado.toLowerCase())
+      )
+    : modalEmpleados;
+
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const firstRecord = total === 0 ? 0 : (page - 1) * pageSize + 1;
   const lastRecord = Math.min(page * pageSize, total);
@@ -140,10 +237,12 @@ function IncidentsPage() {
         description="Gestión de faltas, retardos, omisiones, permisos y tiempo extra."
       >
         <div className="header-actions">
-          <button className="primary-button" type="button">
-            <Plus size={17} />
-            Nueva incidencia
-          </button>
+          {canCreate && (
+            <button className="primary-button" type="button" onClick={openModal}>
+              <Plus size={17} />
+              Nueva incidencia
+            </button>
+          )}
         </div>
       </PageHeader>
 
@@ -412,6 +511,116 @@ function IncidentsPage() {
           </>
         )}
       </section>
+      {/* Modal nueva incidencia */}
+      {showModal && (
+        <div className="modal-overlay" onClick={closeModal}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>Nueva incidencia manual</h3>
+              <button className="modal-close" type="button" onClick={closeModal}>
+                <span style={{ fontSize: "20px" }}>&times;</span>
+              </button>
+            </div>
+
+            <form className="modal-body" onSubmit={handleCreateIncidencia}>
+              {modalError && (
+                <div className="form-error-message">{modalError}</div>
+              )}
+              {modalSuccess && (
+                <div className="form-error-message" style={{ background: "#f0fdf4", borderColor: "#86efac", color: "#166534" }}>
+                  {modalSuccess}
+                </div>
+              )}
+
+              {/* Empleado */}
+              {isEmpleado ? (
+                <div className="form-field">
+                  <label>Empleado</label>
+                  <input
+                    type="text"
+                    value={user?.fullName ?? ""}
+                    readOnly
+                    style={{ background: "var(--color-surface-alt, #f3f4f6)", cursor: "default" }}
+                  />
+                </div>
+              ) : (
+                <>
+                  <div className="form-field">
+                    <label>Buscar empleado</label>
+                    <input
+                      type="text"
+                      placeholder="Nombre o código..."
+                      value={modalBusqEmpleado}
+                      onChange={(e) => { setModalBusqEmpleado(e.target.value); setModalEmpleadoId(""); }}
+                    />
+                  </div>
+                  <div className="form-field">
+                    <label>Empleado</label>
+                    <select
+                      value={modalEmpleadoId}
+                      onChange={(e) => setModalEmpleadoId(e.target.value)}
+                      size={Math.min(5, Math.max(1, empleadosFiltrados.length))}
+                      style={{ height: "auto" }}
+                    >
+                      <option value="">Selecciona empleado...</option>
+                      {empleadosFiltrados.map((emp) => (
+                        <option key={emp.id} value={emp.id}>
+                          {emp.nombre_completo} ({emp.codigo_empleado})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </>
+              )}
+
+              {/* Tipo de incidencia */}
+              <div className="form-field">
+                <label>Tipo de incidencia</label>
+                <select value={modalTipoId} onChange={(e) => setModalTipoId(e.target.value)}>
+                  <option value="">Selecciona tipo...</option>
+                  {modalTipos.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.nombre} — {t.categoria}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Fecha */}
+              <div className="form-field">
+                <label>Fecha</label>
+                <input
+                  type="date"
+                  value={modalFecha}
+                  onChange={(e) => setModalFecha(e.target.value)}
+                />
+              </div>
+
+              {/* Descripción */}
+              <div className="form-field">
+                <label>Descripción / Motivo <span style={{ color: "var(--color-text-muted)", fontWeight: 400 }}>(opcional)</span></label>
+                <textarea
+                  rows={3}
+                  value={modalDescripcion}
+                  onChange={(e) => setModalDescripcion(e.target.value)}
+                  placeholder="Motivo o contexto de la incidencia..."
+                  style={{ width: "100%", borderRadius: "12px", border: "1px solid var(--color-border)", padding: "12px" }}
+                  maxLength={700}
+                />
+              </div>
+
+              <div className="modal-footer">
+                <button className="secondary-button" type="button" onClick={closeModal}>
+                  Cancelar
+                </button>
+                <button className="primary-button" type="submit" disabled={modalLoading}>
+                  {modalLoading ? "Registrando..." : "Registrar incidencia"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
