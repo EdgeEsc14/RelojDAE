@@ -1,9 +1,9 @@
-import os
 from datetime import datetime
 from typing import Annotated
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.core.access_control import AccessScope
@@ -620,12 +620,26 @@ def sync_zk_attendance_to_db(
 
         sync_run_id = f"ZK-SYNC-{datetime.now().strftime('%Y%m%d-%H%M%S')}-{uuid4().hex[:8]}"
 
+        device_ip = service.settings.ip
+        device_codigo = db.execute(
+            text(
+                """
+                SELECT codigo
+                FROM dispositivos.dispositivos
+                WHERE HOST(ip) = :ip
+                  AND activo = TRUE
+                LIMIT 1
+                """
+            ),
+            {"ip": device_ip},
+        ).scalar() or "ZKTeco"
+
         result = insertar_marcaciones_crudas(
             db=db,
             records=limited_records,
             sync_run_id=sync_run_id,
-            dispositivo_ip=os.getenv("ZK_IP"),
-            dispositivo_origen="ZKTeco",
+            dispositivo_ip=device_ip,
+            dispositivo_origen=device_codigo,
         )
 
         return {
