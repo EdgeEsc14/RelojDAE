@@ -115,6 +115,7 @@ class AsistenciaDiariaListadoItem(BaseModel):
     nombre_completo: str
     correo: str | None = None
     empleado_estatus: str
+    zk_user_id: str | None = None
 
     unidad_organizacional_id: int | None = None
     unidad_codigo: str | None = None

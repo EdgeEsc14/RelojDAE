@@ -157,7 +157,7 @@ function DashboardPage() {
       const fechaFin = hoy.toISOString().split("T")[0];
       const fechaInicio = hace7dias.toISOString().split("T")[0];
       const processResult = await asistenciaApi.procesar({ fechaInicio, fechaFin });
-      procesados = processResult?.procesados || processResult?.total_procesados || 0;
+      procesados = processResult?.procesadas ?? 0;
       setSyncStatus({ step: 4, message: `Asistencia procesada (${procesados} registros, ${fechaInicio} a ${fechaFin}). Actualizando dashboard...` });
     } catch (procErr) {
       setSyncStatus({ step: 4, message: "Error al procesar: " + (procErr.message || "desconocido") });
@@ -274,9 +274,9 @@ function DashboardPage() {
 
       {syncStatus && (
         <section className="panel-card">
-          <div className={`sync-status ${syncStatus.error ? "error" : syncStatus.completed ? "completed" : "in-progress"}`}>
+          <div className={`sync-status ${syncStatus.error ? "error" : (syncStatus.completed || syncStatus.warning) ? "completed" : "in-progress"}`}>
             <div className="sync-status-header">
-              {syncStatus.error ? (
+              {syncStatus.error || syncStatus.warning ? (
                 <AlertTriangle size={20} />
               ) : syncStatus.completed ? (
                 <CheckCircle2 size={20} />
@@ -286,13 +286,15 @@ function DashboardPage() {
               <h3>
                 {syncStatus.error
                   ? "Error de sincronización"
+                  : syncStatus.warning
+                  ? "Sincronización completada con advertencias"
                   : syncStatus.completed
                   ? "Sincronización completada"
                   : "Sincronizando..."}
               </h3>
             </div>
             <p>{syncStatus.message}</p>
-            {!syncStatus.completed && !syncStatus.error && (
+            {!syncStatus.completed && !syncStatus.warning && !syncStatus.error && (
               <div className="sync-progress">
                 <div
                   className="sync-progress-bar"
