@@ -23,6 +23,7 @@ export const menuItems = [
   },
   {
     label: "Usuarios",
+    ownLabel: "Mi perfil",
     path: "/employees",
     icon: Users,
     module: MODULES.EMPLEADOS,
@@ -74,6 +75,7 @@ export const menuItems = [
     path: "/audit",
     icon: ClipboardList,
     module: MODULES.AUDITORIA,
+    hidden: true,
   },
   {
     label: "Configuración",

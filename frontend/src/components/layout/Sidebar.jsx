@@ -3,7 +3,7 @@ import { Fingerprint } from "lucide-react";
 
 import { menuItems } from "../../constants/menuItems";
 import { useAuth } from "../../context/AuthContext";
-import { canAccessModule } from "../../utils/permissions";
+import { canAccessModule, hasOwnAccess } from "../../utils/permissions";
 
 function Sidebar() {
   const { user, loading } = useAuth();
@@ -25,8 +25,8 @@ function Sidebar() {
     );
   }
 
-  const visibleMenuItems = menuItems.filter((item) =>
-    canAccessModule(user?.role, item.module)
+  const visibleMenuItems = menuItems.filter(
+    (item) => !item.hidden && canAccessModule(user?.role, item.module)
   );
 
   return (
@@ -45,6 +45,10 @@ function Sidebar() {
       <nav className="sidebar-nav">
         {visibleMenuItems.map((item) => {
           const Icon = item.icon;
+          const label =
+            item.ownLabel && hasOwnAccess(user?.role, item.module)
+              ? item.ownLabel
+              : item.label;
 
           return (
             <NavLink
@@ -56,7 +60,7 @@ function Sidebar() {
               }
             >
               <Icon size={18} />
-              <span>{item.label}</span>
+              <span>{label}</span>
             </NavLink>
           );
         })}

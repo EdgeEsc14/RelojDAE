@@ -11,11 +11,12 @@ import {
   CalendarDays,
 } from "lucide-react";
 
-
 import { dashboardApi } from "../../api/dashboardApi";
 import { asistenciaApi } from "../../api/asistenciaApi";
 import { getZkHealth, syncZkAttendanceToDb } from "../../api/zkApi";
 import PageHeader from "../../components/layout/PageHeader";
+import { useAuth } from "../../context/AuthContext";
+import { ROLES } from "../../constants/roles";
 
 function formatNumber(value) {
   return Number(value ?? 0).toLocaleString("es-MX");
@@ -33,35 +34,336 @@ function formatDateTime(value) {
   }
 }
 
+function formatTime(value) {
+  if (!value) return "—";
+  try {
+    return new Intl.DateTimeFormat("es-MX", {
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(new Date(value));
+  } catch {
+    return "—";
+  }
+}
+
+function formatDate(value) {
+  if (!value) return "";
+  try {
+    const d = new Date(value + "T00:00:00");
+    return d.toLocaleDateString("es-MX", { day: "2-digit", month: "short", year: "numeric" });
+  } catch {
+    return value;
+  }
+}
+
+function minutosAHoras(min) {
+  if (!min) return "00:00";
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+
 function safeText(value, fallback = "No disponible") {
   return String(value ?? "").trim() || fallback;
+}
+
+function getLocalDateISO() {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }
 
 function getPunchLabel(row) {
   return row.punch_label || row.status_label || `Punch ${row.punch ?? "N/D"}`;
 }
 
+function getStatusClass(estatus) {
+  if (estatus === "COMPLETO") return "badge success";
+  if (estatus === "TOLERANCIA") return "badge neutral";
+  if (estatus === "RETARDO_MENOR") return "badge warning";
+  if (estatus === "RETARDO_MAYOR") return "badge warning";
+  if (estatus === "FALTA") return "badge danger";
+  if (estatus === "OMISION_ENTRADA") return "badge neutral";
+  if (estatus === "OMISION_SALIDA") return "badge neutral";
+  if (estatus === "DIA_NO_LABORAL") return "badge neutral";
+  return "badge neutral";
+}
+
+function getStatusLabel(estatus) {
+  const labels = {
+    COMPLETO: "Completo",
+    TOLERANCIA: "Tolerancia",
+    RETARDO_MENOR: "Retardo menor",
+    RETARDO_MAYOR: "Retardo mayor",
+    FALTA: "Falta",
+    OMISION_ENTRADA: "Om. entrada",
+    OMISION_SALIDA: "Om. salida",
+    DIA_NO_LABORAL: "No laboral",
+    EN_CURSO: "En curso",
+  };
+  return labels[estatus] || estatus || "—";
+}
+
 const CATEGORIAS_HOY = [
-  { estatus: "COMPLETO",       campo: "completos",         label: "Puntuales",    variant: "success" },
-  { estatus: "TOLERANCIA",     campo: "tolerancias",       label: "Tolerancia",   variant: "teal"    },
-  { estatus: "RETARDO_MENOR",  campo: "retardos_menores",  label: "Ret. menor",   variant: "warning" },
-  { estatus: "RETARDO_MAYOR",  campo: "retardos_mayores",  label: "Ret. mayor",   variant: "orange"  },
-  { estatus: "FALTA",          campo: "faltas",            label: "Faltas",       variant: "danger"  },
-  { estatus: "OMISION_ENTRADA",campo: "omisiones_entrada", label: "Om. entrada",  variant: "muted"   },
-  { estatus: "OMISION_SALIDA", campo: "omisiones_salida",  label: "Om. salida",   variant: "muted"   },
+  { estatus: "COMPLETO",        campo: "completos",         label: "Puntuales",    variant: "success" },
+  { estatus: "TOLERANCIA",      campo: "tolerancias",       label: "Tolerancia",   variant: "teal"    },
+  { estatus: "RETARDO_MENOR",   campo: "retardos_menores",  label: "Ret. menor",   variant: "warning" },
+  { estatus: "RETARDO_MAYOR",   campo: "retardos_mayores",  label: "Ret. mayor",   variant: "orange"  },
+  { estatus: "FALTA",           campo: "faltas",            label: "Faltas",       variant: "danger"  },
+  { estatus: "OMISION_ENTRADA", campo: "omisiones_entrada", label: "Om. entrada",  variant: "muted"   },
+  { estatus: "OMISION_SALIDA",  campo: "omisiones_salida",  label: "Om. salida",   variant: "muted"   },
 ];
 
-function DashboardPage() {
+// ─── Vista empleado ──────────────────────────────────────────────────────────
+
+function EmployeeDashboard({ codigoEmpleado }) {
+  const [resumen, setResumen] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  async function loadResumen() {
+    if (!codigoEmpleado) {
+      setError("Tu cuenta no está vinculada a un empleado. Pide al administrador que complete la configuración.");
+      return;
+    }
+    setLoading(true);
+    setError("");
+    try {
+      const data = await asistenciaApi.obtenerResumenEmpleado(codigoEmpleado, 15);
+      setResumen(data);
+    } catch (err) {
+      setError(err.message || "No fue posible cargar tu información.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadResumen();
+  }, [codigoEmpleado]);
+
+  const hoy = getLocalDateISO();
+  const registroHoy = resumen?.asistencias_recientes?.find((d) => d.fecha === hoy);
+  const periodo = resumen?.resumen_periodo;
+  const empleado = resumen?.empleado;
+
+  return (
+    <div className="page-stack">
+      <PageHeader
+        title="Mi asistencia"
+        description="Resumen de tu asistencia y puntualidad."
+      >
+        <div className="header-actions">
+          <button
+            className="secondary-button"
+            type="button"
+            disabled={loading}
+            onClick={loadResumen}
+          >
+            <RefreshCw size={17} className={loading ? "spinning" : ""} />
+            {loading ? "Actualizando..." : "Actualizar"}
+          </button>
+        </div>
+      </PageHeader>
+
+      {error && (
+        <section className="panel-card">
+          <div className="empty-state">
+            <AlertTriangle size={42} />
+            <h3>Error al cargar</h3>
+            <p>{error}</p>
+          </div>
+        </section>
+      )}
+
+      {loading && !resumen && (
+        <section className="panel-card">
+          <div className="empty-state">
+            <RefreshCw size={42} className="spinning" />
+            <h3>Cargando...</h3>
+            <p>Consultando tu información de asistencia.</p>
+          </div>
+        </section>
+      )}
+
+      {resumen && (
+        <>
+          {/* Hoy */}
+          <section className="panel-card">
+            <div className="panel-header">
+              <div>
+                <h3>Hoy</h3>
+                <p>{formatDate(hoy)}</p>
+              </div>
+              <CalendarDays size={22} />
+            </div>
+
+            {registroHoy ? (
+              <div className="report-info-grid">
+                <div>
+                  <span>Estatus</span>
+                  <strong>
+                    <span className={getStatusClass(registroHoy.estatus)}>
+                      {getStatusLabel(registroHoy.estatus)}
+                    </span>
+                  </strong>
+                </div>
+                <div>
+                  <span>Entrada</span>
+                  <strong>{formatTime(registroHoy.primera_entrada)}</strong>
+                </div>
+                <div>
+                  <span>Salida</span>
+                  <strong>{formatTime(registroHoy.ultima_salida)}</strong>
+                </div>
+                {registroHoy.minutos_retardo > 0 && (
+                  <div>
+                    <span>Retardo</span>
+                    <strong>{registroHoy.minutos_retardo} min</strong>
+                  </div>
+                )}
+                <div>
+                  <span>Horas ordinarias</span>
+                  <strong>{minutosAHoras(registroHoy.minutos_ordinarios)}</strong>
+                </div>
+                {registroHoy.minutos_extra > 0 && (
+                  <div>
+                    <span>Horas extra</span>
+                    <strong>{minutosAHoras(registroHoy.minutos_extra)}</strong>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="empty-state">
+                <Clock size={32} />
+                <p>Sin registro procesado para hoy.</p>
+              </div>
+            )}
+          </section>
+
+          {/* Resumen del periodo */}
+          {periodo && (
+            <section className="metrics-grid four-columns">
+              <article className="metric-card">
+                <div className="metric-icon" style={{ color: "#10b981" }}>
+                  <CheckCircle2 size={22} />
+                </div>
+                <div>
+                  <p>Días completos</p>
+                  <strong>{periodo.dias_completos}</strong>
+                  <span>de {periodo.dias_laborales} laborales</span>
+                </div>
+              </article>
+
+              <article className="metric-card">
+                <div className="metric-icon" style={{ color: "#ef4444" }}>
+                  <AlertTriangle size={22} />
+                </div>
+                <div>
+                  <p>Faltas</p>
+                  <strong>{periodo.faltas}</strong>
+                  <span>
+                    {periodo.retardos_menores + periodo.retardos_mayores} retardos
+                  </span>
+                </div>
+              </article>
+
+              <article className="metric-card">
+                <div className="metric-icon" style={{ color: "#3b82f6" }}>
+                  <Clock size={22} />
+                </div>
+                <div>
+                  <p>Horas ordinarias</p>
+                  <strong>{minutosAHoras(periodo.minutos_ordinarios)}</strong>
+                  {periodo.minutos_extra > 0 && (
+                    <span>+{minutosAHoras(periodo.minutos_extra)} extra</span>
+                  )}
+                </div>
+              </article>
+
+              <article className="metric-card">
+                <div className="metric-icon" style={{ color: "#f59e0b" }}>
+                  <CalendarDays size={22} />
+                </div>
+                <div>
+                  <p>Puntos acumulados</p>
+                  <strong>{periodo.puntos_efectivos ?? periodo.puntos_brutos ?? 0}</strong>
+                  <span>en el periodo actual</span>
+                </div>
+              </article>
+            </section>
+          )}
+
+          {/* Últimas asistencias */}
+          <section className="panel-card">
+            <div className="panel-header">
+              <div>
+                <h3>Últimos registros</h3>
+                <p>
+                  {empleado?.nombre_completo} · {empleado?.codigo_empleado}
+                </p>
+              </div>
+            </div>
+
+            {(resumen.asistencias_recientes ?? []).length === 0 ? (
+              <div className="empty-state">
+                <CalendarDays size={32} />
+                <p>Sin registros de asistencia.</p>
+              </div>
+            ) : (
+              <div className="simple-table">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Fecha</th>
+                      <th>Entrada</th>
+                      <th>Salida</th>
+                      <th>Retardo</th>
+                      <th>Horas</th>
+                      <th>Estatus</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {resumen.asistencias_recientes.map((dia) => (
+                      <tr key={dia.id}>
+                        <td>{formatDate(dia.fecha)}</td>
+                        <td>{formatTime(dia.primera_entrada)}</td>
+                        <td>{formatTime(dia.ultima_salida)}</td>
+                        <td>{dia.minutos_retardo > 0 ? `${dia.minutos_retardo} min` : "—"}</td>
+                        <td>{minutosAHoras(dia.minutos_ordinarios)}</td>
+                        <td>
+                          <span className={getStatusClass(dia.estatus)}>
+                            {getStatusLabel(dia.estatus)}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ─── Vista admin/supervisor ──────────────────────────────────────────────────
+
+function AdminDashboard() {
   const [dashboard, setDashboard] = useState(null);
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [syncStatus, setSyncStatus] = useState(null);
   const [error, setError] = useState("");
-  const [procesamientoOmitido, setProcesamientoOmitido] = useState(false);
 
   const [categoriaSeleccionada, setCategoriaSeleccionada] = useState(null);
   const [empleadosCategoria, setEmpleadosCategoria] = useState([]);
   const [loadingCategoria, setLoadingCategoria] = useState(false);
+  const [errorCategoria, setErrorCategoria] = useState("");
 
   async function toggleCategoria(estatus) {
     if (categoriaSeleccionada === estatus) {
@@ -70,12 +372,16 @@ function DashboardPage() {
       return;
     }
     setCategoriaSeleccionada(estatus);
+    setErrorCategoria("");
     setLoadingCategoria(true);
     try {
-      const hoy = new Date().toISOString().split("T")[0];
+      const hoy = getLocalDateISO();
       const result = await asistenciaApi.listarDiaria({ fecha: hoy, estatus, limit: 100 });
+      console.log("listarDiaria response:", { hoy, estatus, total: result?.total, itemsLen: result?.items?.length, fechaResp: result?.fecha });
       setEmpleadosCategoria(result?.items ?? result ?? []);
-    } catch {
+    } catch (err) {
+      console.error("toggleCategoria error:", err);
+      setErrorCategoria(err.message || "Error al cargar empleados.");
       setEmpleadosCategoria([]);
     } finally {
       setLoadingCategoria(false);
@@ -86,29 +392,12 @@ function DashboardPage() {
     try {
       setLoading(true);
       setError("");
-
-      // El motor solo genera FALTA definitiva para un empleado sin
-      // marcaciones una vez que su jornada programada ya cerró
-      // (Contrato §15: mientras datetime.now() < salida_programada la
-      // fila ni siquiera se escribe). Sin procesar "hoy" antes de leer
-      // el resumen, el Dashboard mostraba una foto incompleta: solo
-      // los empleados cuya jornada ya se había (re)procesado después de
-      // su cierre aparecían como falta/completo; el resto (jornada ya
-      // cerrada pero nunca reprocesada desde entonces) simplemente no
-      // tenía fila y desaparecía de los conteos.
-      //
-      // Requiere alcance TOTAL + editar sobre ASISTENCIA; si el usuario
-      // no lo tiene (p. ej. Supervisor/Empleado viendo su Dashboard),
-      // se omite en silencio y se avisa para no ocultar que los datos
-      // pueden estar desactualizados.
       try {
-        const hoy = new Date().toISOString().split("T")[0];
+        const hoy = getLocalDateISO();
         await asistenciaApi.procesar({ fechaInicio: hoy, fechaFin: hoy });
-        setProcesamientoOmitido(false);
       } catch {
-        setProcesamientoOmitido(true);
+        // sin permiso para procesar — se ignora en silencio
       }
-
       const data = await dashboardApi.obtenerResumen();
       setDashboard(data);
     } catch (err) {
@@ -152,10 +441,13 @@ function DashboardPage() {
     }
 
     try {
-      const hoy = new Date();
-      const hace7dias = new Date(hoy.getTime() - 7 * 24 * 60 * 60 * 1000);
-      const fechaFin = hoy.toISOString().split("T")[0];
-      const fechaInicio = hace7dias.toISOString().split("T")[0];
+      const fechaFin = getLocalDateISO();
+      const hace7dias = new Date();
+      hace7dias.setDate(hace7dias.getDate() - 7);
+      const y = hace7dias.getFullYear();
+      const mo = String(hace7dias.getMonth() + 1).padStart(2, "0");
+      const da = String(hace7dias.getDate()).padStart(2, "0");
+      const fechaInicio = `${y}-${mo}-${da}`;
       const processResult = await asistenciaApi.procesar({ fechaInicio, fechaFin });
       procesados = processResult?.procesadas ?? 0;
       setSyncStatus({ step: 4, message: `Asistencia procesada (${procesados} registros, ${fechaInicio} a ${fechaFin}). Actualizando dashboard...` });
@@ -316,22 +608,6 @@ function DashboardPage() {
         </section>
       )}
 
-      {!error && procesamientoOmitido && (
-        <section className="warning-banner">
-          <AlertTriangle size={22} />
-          <div>
-            <strong>Datos posiblemente desactualizados</strong>
-            <p>
-              Tu rol no tiene permiso para reprocesar la asistencia del día,
-              así que estos números reflejan el último procesamiento
-              disponible, no necesariamente el estado tras el cierre de la
-              jornada de hoy. Pide a un administrador que ejecute
-              &ldquo;Sincronizar ahora&rdquo; o procese asistencia.
-            </p>
-          </div>
-        </section>
-      )}
-
       {loading && !dashboard && (
         <section className="panel-card">
           <div className="empty-state">
@@ -344,7 +620,6 @@ function DashboardPage() {
 
       {dashboard && (
         <>
-          {/* ZONA 1: Hoy — KPIs + Alertas RH */}
           <section className="metrics-grid four-columns">
             {metrics.map((m) => {
               const Icon = m.icon;
@@ -363,7 +638,6 @@ function DashboardPage() {
             })}
           </section>
 
-          {/* DESGLOSE HOY — clickeable por categoría */}
           <section className="panel-card">
             <div className="panel-header">
               <div>
@@ -408,6 +682,11 @@ function DashboardPage() {
                         <div className="empty-state">
                           <RefreshCw size={28} className="spinning" />
                           <p>Cargando empleados...</p>
+                        </div>
+                      ) : errorCategoria ? (
+                        <div className="empty-state">
+                          <AlertTriangle size={28} />
+                          <p style={{ color: "var(--color-danger)" }}>{errorCategoria}</p>
                         </div>
                       ) : empleadosCategoria.length === 0 ? (
                         <div className="empty-state">
@@ -524,7 +803,6 @@ function DashboardPage() {
             )}
           </section>
 
-          {/* Top faltas — 30 días */}
           <section className="panel-card">
             <div className="panel-header">
               <div>
@@ -618,7 +896,6 @@ function DashboardPage() {
             )}
           </section>
 
-          {/* ZONA 4: Actividad reciente */}
           <section className="panel-card">
             <div className="panel-header">
               <div>
@@ -674,6 +951,18 @@ function DashboardPage() {
       )}
     </div>
   );
+}
+
+// ─── Enrutador de dashboard por rol ─────────────────────────────────────────
+
+function DashboardPage() {
+  const { user } = useAuth();
+
+  if (user?.role === ROLES.EMPLEADO) {
+    return <EmployeeDashboard codigoEmpleado={user.codigoEmpleado} />;
+  }
+
+  return <AdminDashboard />;
 }
 
 export default DashboardPage;

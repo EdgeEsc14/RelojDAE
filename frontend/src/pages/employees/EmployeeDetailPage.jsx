@@ -157,7 +157,7 @@ function EmployeeDetailPage() {
     try {
       await empleadosApi.asignarHorario(employeeId, {
         horario_id: Number(selectedHorario),
-        fecha_inicio: new Date().toISOString().split("T")[0],
+        fecha_inicio: new Date().toLocaleDateString("sv"),
         cerrar_asignaciones_activas: true,
       });
       setShowHorarioModal(false);

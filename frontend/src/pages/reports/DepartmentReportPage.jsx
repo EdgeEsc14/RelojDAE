@@ -27,8 +27,8 @@ function minutosAHoras(min) {
 function getDefaultDates() {
   const today = new Date();
   const firstDay = new Date(today.getFullYear(), today.getMonth(), 1);
-  const fin = today.toISOString().split("T")[0];
-  const inicio = firstDay.toISOString().split("T")[0];
+  const fin = today.toLocaleDateString("sv");
+  const inicio = firstDay.toLocaleDateString("sv");
   return { inicio, fin };
 }
 
@@ -366,6 +366,7 @@ function DepartmentReportPage() {
                     <th>Nombre</th>
                     <th>Departamento</th>
                     <th>Completos</th>
+                    <th>Tolerancia</th>
                     <th>Ret. menores</th>
                     <th>Ret. mayores</th>
                     <th>Faltas</th>
@@ -380,6 +381,7 @@ function DepartmentReportPage() {
                       <td>{emp.nombre_completo}</td>
                       <td>{emp.unidad_nombre || "Sin departamento (nivel superior)"}</td>
                       <td>{emp.dias_completos}</td>
+                      <td>{emp.tolerancias ?? 0}</td>
                       <td>{emp.retardos_menores}</td>
                       <td>{emp.retardos_mayores}</td>
                       <td>{emp.faltas}</td>

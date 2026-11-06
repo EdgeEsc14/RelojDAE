@@ -73,8 +73,8 @@ function minutosAHoras(min) {
 function getDefaultDates() {
   const today = new Date();
   const firstDay = new Date(today.getFullYear(), today.getMonth(), 1);
-  const fin = today.toISOString().split("T")[0];
-  const inicio = firstDay.toISOString().split("T")[0];
+  const fin = today.toLocaleDateString("sv");
+  const inicio = firstDay.toLocaleDateString("sv");
   return { inicio, fin };
 }
 
@@ -369,6 +369,7 @@ function EmployeeReportPage() {
                     <th>Estatus</th>
                     <th>Puntos</th>
                     <th>Revisión</th>
+                    <th>Observaciones</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -394,6 +395,9 @@ function EmployeeReportPage() {
                         ) : (
                           "—"
                         )}
+                      </td>
+                      <td style={{ fontSize: "12px", color: "var(--color-text-muted)", maxWidth: "180px" }}>
+                        {dia.observaciones || "—"}
                       </td>
                     </tr>
                   ))}

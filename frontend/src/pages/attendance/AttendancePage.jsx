@@ -7,12 +7,9 @@ import {
   ChevronDown,
   ChevronUp,
   Clock,
-  Download,
   FileWarning,
   Fingerprint,
   Search,
-  SlidersHorizontal,
-  TimerReset,
 } from "lucide-react";
 
 import PageHeader from "../../components/layout/PageHeader";
@@ -29,7 +26,7 @@ import { getModuleAccess } from "../../utils/permissions";
 // ============================================================
 
 function getTodayDateInputValue() {
-  return new Date().toISOString().slice(0, 10);
+  return new Date().toLocaleDateString("sv");
 }
 
 function formatDate(value) {
@@ -62,7 +59,7 @@ function formatMinutes(minutes) {
 }
 
 function normalizeText(value) {
-  return String(value ?? "").trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  return String(value ?? "").trim().toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
 }
 
 function formatAttendanceStatus(status) {
@@ -87,6 +84,29 @@ function getStatusClass(status) {
   return "badge neutral";
 }
 
+function FaltasBadge({ count }) {
+  if (count <= 0) return null;
+  if (count >= 3) {
+    return (
+      <span className="badge danger" style={{ fontSize: "11px", marginLeft: "6px" }} title={`${count} faltas en los últimos 30 días — baja`}>
+        {count} faltas · Baja
+      </span>
+    );
+  }
+  if (count === 2) {
+    return (
+      <span className="badge warning" style={{ fontSize: "11px", marginLeft: "6px" }} title="2 faltas en los últimos 30 días">
+        2 faltas
+      </span>
+    );
+  }
+  return (
+    <span className="badge neutral" style={{ fontSize: "11px", marginLeft: "6px" }} title="1 falta en los últimos 30 días">
+      1 falta
+    </span>
+  );
+}
+
 function mapRow(row) {
   return {
     id: row.asistencia_id || row.id,
@@ -109,9 +129,21 @@ function mapRow(row) {
     points: Number(row.puntos_generados ?? 0),
     requiresReview: row.requiere_revision,
     observations: row.observaciones,
+    faltasRecientes: Number(row.faltas_recientes ?? 0),
     raw: row,
   };
 }
+
+const STATUS_FILTERS = [
+  { label: "Todos", value: "" },
+  { label: "Completo", value: "COMPLETO" },
+  { label: "Retardo menor", value: "RETARDO_MENOR" },
+  { label: "Retardo mayor", value: "RETARDO_MAYOR" },
+  { label: "Falta", value: "FALTA" },
+  { label: "Om. entrada", value: "OMISION_ENTRADA" },
+  { label: "Om. salida", value: "OMISION_SALIDA" },
+  { label: "En curso", value: "EN_CURSO" },
+];
 
 // ============================================================
 // Componente principal
@@ -124,14 +156,8 @@ function AttendancePage() {
   const [error, setError] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
   const [attendanceDate, setAttendanceDate] = useState(getTodayDateInputValue());
+  const [statusFilter, setStatusFilter] = useState("");
   const [reloadToken, setReloadToken] = useState(0);
-
-  // Procesar
-  const [processStartDate, setProcessStartDate] = useState(getTodayDateInputValue());
-  const [processEndDate, setProcessEndDate] = useState(getTodayDateInputValue());
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [processResult, setProcessResult] = useState(null);
-  const [processError, setProcessError] = useState("");
 
   // Modal incidencia
   const [showIncidentModal, setShowIncidentModal] = useState(false);
@@ -149,7 +175,6 @@ function AttendancePage() {
   const [rawLoading, setRawLoading] = useState(false);
 
   const attendanceAccess = getModuleAccess(user?.role, MODULES.ASISTENCIA);
-  const canProcess = attendanceAccess === DATA_SCOPES.TOTAL;
   const canCreateIncident = [DATA_SCOPES.TOTAL, DATA_SCOPES.AREA].includes(attendanceAccess);
 
   const currentEmployeeId = user?.employeeId ?? user?.empleadoId ?? user?.raw?.empleado_id ?? null;
@@ -170,7 +195,12 @@ function AttendancePage() {
       setLoading(true);
       setError("");
       try {
-        const response = await asistenciaApi.listarDiaria({ fecha: attendanceDate, limit: 100, offset: 0 });
+        const response = await asistenciaApi.listarDiaria({
+          fecha: attendanceDate,
+          estatus: statusFilter,
+          limit: 100,
+          offset: 0,
+        });
         if (!mounted) return;
         const items = response?.items ?? response?.data ?? response?.resultados ?? [];
         setRecords(items.map(mapRow));
@@ -184,7 +214,7 @@ function AttendancePage() {
     }
     load();
     return () => { mounted = false; };
-  }, [attendanceDate, reloadToken]);
+  }, [attendanceDate, statusFilter, reloadToken]);
 
   // Filtro por alcance
   const scopedRecords = useMemo(() => {
@@ -210,30 +240,6 @@ function AttendancePage() {
   const completeDays = visibleRecords.filter((r) => r.status?.includes("Completo")).length;
   const lateDays = visibleRecords.filter((r) => r.status?.includes("Retardo")).length;
   const faltaDays = visibleRecords.filter((r) => r.status === "Falta" || r.status?.includes("Omisión")).length;
-
-  // Procesar asistencia
-  async function handleProcess(e) {
-    e.preventDefault();
-    if (!processStartDate || !processEndDate) { setProcessError("Selecciona ambas fechas."); return; }
-    if (processStartDate > processEndDate) { setProcessError("La fecha inicio no puede ser mayor que la fecha fin."); return; }
-    const dias = Math.round((new Date(processEndDate) - new Date(processStartDate)) / 86400000) + 1;
-    if (dias > 31) { setProcessError(`El rango seleccionado es de ${dias} días. El máximo permitido es 31 días por solicitud.`); return; }
-    setIsProcessing(true); setProcessError(""); setProcessResult(null);
-    try {
-      const res = await asistenciaApi.procesar({ fechaInicio: processStartDate, fechaFin: processEndDate });
-      setProcessResult(res);
-      // Si processEndDate es hoy y hay registros omitidos (turno abierto sin entradas),
-      // mostrar el día anterior que sí tiene datos procesados.
-      const today = getTodayDateInputValue();
-      const omitidos = (res.registros_encontrados ?? 0) - (res.procesadas ?? 0);
-      const dateToShow = (processEndDate === today && omitidos > 0)
-        ? (() => { const d = new Date(processEndDate + "T00:00:00"); d.setDate(d.getDate() - 1); return d.toISOString().slice(0, 10); })()
-        : processEndDate;
-      setAttendanceDate(dateToShow);
-      setReloadToken((t) => t + 1);
-    } catch (err) { setProcessError(err.message || "Error al procesar."); }
-    finally { setIsProcessing(false); }
-  }
 
   // Expandir marcaciones crudas
   async function toggleRawPunches(row) {
@@ -300,16 +306,7 @@ function AttendancePage() {
       <PageHeader
         title="Asistencia"
         description="Entradas, salidas, retardos y faltas procesadas. Crea justificantes o revisa marcaciones originales."
-      >
-        <div className="header-actions">
-          {canProcess && (
-            <button className="primary-button" type="button" onClick={() => document.getElementById("processSection")?.scrollIntoView({ behavior: "smooth" })}>
-              <TimerReset size={17} />
-              Procesar periodo
-            </button>
-          )}
-        </div>
-      </PageHeader>
+      />
 
       {/* Métricas */}
       <section className="metrics-grid four-columns">
@@ -331,78 +328,39 @@ function AttendancePage() {
         </article>
       </section>
 
-      {/* Procesamiento (solo admins) */}
-      {canProcess && (
-        <section className="panel-card" id="processSection">
-          <div className="panel-header">
-            <div><h3>Procesar asistencia</h3><p>Genera registros de asistencia a partir de marcaciones sincronizadas.</p></div>
-            <TimerReset size={22} />
-          </div>
-          <form onSubmit={handleProcess} style={{ display: "flex", gap: "12px", alignItems: "flex-end", flexWrap: "wrap" }}>
-            <div className="form-field" style={{ minWidth: "140px" }}>
-              <label htmlFor="pStart">Desde</label>
-              <input id="pStart" type="date" value={processStartDate} onChange={(e) => setProcessStartDate(e.target.value)} />
-            </div>
-            <div className="form-field" style={{ minWidth: "140px" }}>
-              <label htmlFor="pEnd">Hasta</label>
-              <input id="pEnd" type="date" value={processEndDate} onChange={(e) => setProcessEndDate(e.target.value)} />
-            </div>
-            <button className="primary-button" type="submit" disabled={isProcessing}>
-              <TimerReset size={17} /> {isProcessing ? "Procesando..." : "Procesar"}
-            </button>
-          </form>
-          {processError && <p style={{ color: "var(--color-danger-text)", marginTop: "8px" }}>{processError}</p>}
-          {processResult && (
-            <div style={{ marginTop: "8px" }}>
-              <p style={{ color: "var(--color-success-text)" }}>
-                Procesamiento completado — {processResult.procesadas ?? 0} registro(s) guardado(s)
-                {processResult.faltas_generadas > 0 && `, ${processResult.faltas_generadas} falta(s)`}
-                .
-              </p>
-              {(processResult.registros_encontrados ?? 0) > (processResult.procesadas ?? 0) && (
-                <p style={{ color: "var(--color-warning-text, #b45309)", fontSize: "13px", marginTop: "4px" }}>
-                  {(processResult.registros_encontrados - (processResult.procesadas ?? 0))} registro(s) omitido(s) — turno en curso sin marcaciones o error de configuración.
-                </p>
-              )}
-              {processResult.errores?.length > 0 && (
-                <details style={{ marginTop: "8px", fontSize: "13px" }}>
-                  <summary style={{ color: "var(--color-danger-text)", cursor: "pointer" }}>
-                    {processResult.errores.length} error(es) de procesamiento
-                  </summary>
-                  <ul style={{ marginTop: "6px", paddingLeft: "16px", color: "var(--color-danger-text)" }}>
-                    {processResult.errores.slice(0, 10).map((e, i) => (
-                      <li key={i} style={{ marginBottom: "4px" }}>
-                        <strong>{e.fecha}</strong>{e.empleado_id ? ` · Emp. ${e.empleado_id}` : ""}: {e.error}
-                      </li>
-                    ))}
-                    {processResult.errores.length > 10 && (
-                      <li>… y {processResult.errores.length - 10} más.</li>
-                    )}
-                  </ul>
-                </details>
-              )}
-            </div>
-          )}
-        </section>
-      )}
-
       {/* Tabla de asistencia */}
       <section className="panel-card">
+        {/* Fila de fecha + búsqueda */}
         <div className="filters-row">
           <div className="form-field compact-field">
             <label htmlFor="attDate">Fecha</label>
-            <input id="attDate" type="date" value={attendanceDate} onChange={(e) => setAttendanceDate(e.target.value)} />
+            <input id="attDate" type="date" value={attendanceDate} onChange={(e) => { setAttendanceDate(e.target.value); setStatusFilter(""); }} />
           </div>
           <div className="filter-search">
             <Search size={18} />
-            <input type="text" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} placeholder="Buscar empleado, área, estado..." />
+            <input type="text" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} placeholder="Buscar empleado, área..." />
           </div>
+        </div>
+
+        {/* Chips de filtro por estatus */}
+        <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", marginBottom: "12px" }}>
+          {STATUS_FILTERS.map((f) => (
+            <button
+              key={f.value}
+              type="button"
+              onClick={() => setStatusFilter(f.value)}
+              className={statusFilter === f.value ? "primary-button" : "secondary-button"}
+              style={{ padding: "4px 12px", fontSize: "13px" }}
+            >
+              {f.label}
+            </button>
+          ))}
         </div>
 
         {error && <div className="empty-state"><AlertTriangle size={32} /><p>{error}</p></div>}
         {loading && <div className="empty-state"><Clock size={32} /><p>Cargando asistencia...</p></div>}
         {!loading && !error && visibleRecords.length === 0 && (
-          <div className="empty-state"><CalendarDays size={32} /><h3>Sin registros</h3><p>No hay asistencia procesada para esta fecha.</p></div>
+          <div className="empty-state"><CalendarDays size={32} /><h3>Sin registros</h3><p>No hay asistencia procesada para esta fecha{statusFilter ? " con este filtro" : ""}.</p></div>
         )}
 
         {!loading && visibleRecords.length > 0 && (
@@ -429,7 +387,11 @@ function AttendancePage() {
                       <td>
                         <div className="employee-cell">
                           <div className="employee-avatar">{row.employeeName.charAt(0)}</div>
-                          <div><strong>{row.employeeName}</strong><span>{row.department}</span></div>
+                          <div>
+                            <strong>{row.employeeName}</strong>
+                            <span>{row.department}</span>
+                            <FaltasBadge count={row.faltasRecientes} />
+                          </div>
                         </div>
                       </td>
                       <td>{row.expectedSchedule}</td>
@@ -518,7 +480,7 @@ function AttendancePage() {
             <div className="modal-header">
               <h3>Registrar justificante</h3>
               <button className="modal-close" type="button" onClick={() => setShowIncidentModal(false)}>
-                <AlertTriangle size={0} /><span style={{ fontSize: "20px" }}>&times;</span>
+                <span style={{ fontSize: "20px" }}>&times;</span>
               </button>
             </div>
             <form className="modal-body" onSubmit={handleCreateIncident}>

@@ -17,8 +17,8 @@ function getDefaultDates() {
   const today = new Date();
   const firstDay = new Date(today.getFullYear(), today.getMonth(), 1);
   return {
-    inicio: firstDay.toISOString().split("T")[0],
-    fin: today.toISOString().split("T")[0],
+    inicio: firstDay.toLocaleDateString("sv"),
+    fin: today.toLocaleDateString("sv"),
   };
 }
 
