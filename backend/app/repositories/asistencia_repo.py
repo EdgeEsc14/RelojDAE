@@ -489,7 +489,9 @@ def listar_asistencia_diaria(
             ad.observaciones,
 
             COALESCE(inc.total_incidencias, 0) AS total_incidencias,
-            COALESCE(inc.puntos_efectivos_incidencias, 0) AS puntos_efectivos_incidencias
+            COALESCE(inc.puntos_efectivos_incidencias, 0) AS puntos_efectivos_incidencias,
+
+            COALESCE(flt.faltas_recientes, 0) AS faltas_recientes
 
         FROM asistencia.asistencias_diarias ad
 
@@ -512,6 +514,15 @@ def listar_asistencia_diaria(
             FROM asistencia.incidencias i
             WHERE i.asistencia_diaria_id = ad.id
         ) inc ON TRUE
+
+        LEFT JOIN LATERAL (
+            SELECT COUNT(*) AS faltas_recientes
+            FROM asistencia.asistencias_diarias f
+            WHERE f.empleado_id = e.id
+              AND f.estatus = 'FALTA'
+              AND f.fecha >= CURRENT_DATE - INTERVAL '30 days'
+              AND f.procesada = true
+        ) flt ON TRUE
 
         {where_sql}
 

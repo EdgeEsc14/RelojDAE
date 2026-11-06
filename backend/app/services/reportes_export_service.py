@@ -373,10 +373,10 @@ def generar_pdf_reporte_departamental(data: dict[str, Any]) -> bytes:
         pdf.cell(0, 6, "DETALLE POR EMPLEADO", new_x="LMARGIN", new_y="NEXT")
 
         emp_headers = [
-            "Codigo", "Nombre", "Departamento", "Completos",
+            "Codigo", "Nombre", "Departamento", "Completos", "Toleran",
             "Ret.Men", "Ret.May", "Faltas", "Revisar", "Puntos",
         ]
-        emp_col_widths = [22, 60, 52, 16, 15, 15, 13, 13, 13]
+        emp_col_widths = [22, 55, 50, 14, 13, 13, 13, 13, 13, 13]
 
         pdf.set_font("Helvetica", "B", 7)
         for i, header in enumerate(emp_headers):
@@ -398,11 +398,12 @@ def generar_pdf_reporte_departamental(data: dict[str, Any]) -> bytes:
             )
             pdf.cell(emp_col_widths[2], 5, depto_emp, border=1)
             pdf.cell(emp_col_widths[3], 5, str(emp["dias_completos"]), border=1, align="C")
-            pdf.cell(emp_col_widths[4], 5, str(emp["retardos_menores"]), border=1, align="C")
-            pdf.cell(emp_col_widths[5], 5, str(emp["retardos_mayores"]), border=1, align="C")
-            pdf.cell(emp_col_widths[6], 5, str(emp["faltas"]), border=1, align="C")
-            pdf.cell(emp_col_widths[7], 5, str(emp.get("dias_requieren_revision", 0)), border=1, align="C")
-            pdf.cell(emp_col_widths[8], 5, str(emp["total_puntos"]), border=1, align="C")
+            pdf.cell(emp_col_widths[4], 5, str(emp.get("tolerancias", 0)), border=1, align="C")
+            pdf.cell(emp_col_widths[5], 5, str(emp["retardos_menores"]), border=1, align="C")
+            pdf.cell(emp_col_widths[6], 5, str(emp["retardos_mayores"]), border=1, align="C")
+            pdf.cell(emp_col_widths[7], 5, str(emp["faltas"]), border=1, align="C")
+            pdf.cell(emp_col_widths[8], 5, str(emp.get("dias_requieren_revision", 0)), border=1, align="C")
+            pdf.cell(emp_col_widths[9], 5, str(emp["total_puntos"]), border=1, align="C")
             pdf.ln()
 
     _draw_pie_pagina(pdf)

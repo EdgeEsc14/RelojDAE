@@ -146,6 +146,7 @@ class AsistenciaDiariaListadoItem(BaseModel):
 
     total_incidencias: int = 0
     puntos_efectivos_incidencias: int = 0
+    faltas_recientes: int = 0
 
 
 class AsistenciaDiariaListadoResponse(BaseModel):
