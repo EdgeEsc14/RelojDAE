@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import date, datetime, time, timedelta
 from typing import Any
 
@@ -121,34 +122,47 @@ def _calcular_estatus_y_puntos(
     politica: dict[str, Any],
     fecha=None,
     salida_programada=None,
+    entrada_programada=None,
 ) -> tuple[str, int, bool, str] | None:
     """
-    Contrato §15: la jornada se considera abierta mientras el momento
-    actual no haya alcanzado la salida_programada (horario efectivo ya
-    resuelto con calendario/horario_dias/cruce de medianoche). No se usa
-    ningún margen adicional hardcodeado: no existe en el modelo actual
-    (horarios/politicas_asistencia) un campo de "ventana de salida" o
-    margen de cierre, y el contrato prohíbe inventar uno. La salida
-    programada es la propia frontera de la ventana válida de salida
-    (ver ejemplo del contrato: turno que termina a las 16:00 no puede
-    marcarse a las 14:00, es decir, antes de salida_programada).
+    Contrato §15 (enmendado): dos ventanas de cierre independientes.
 
-    fecha se conserva por compatibilidad de firma pero ya no participa
-    en la decisión: comparar directamente contra salida_programada es
-    correcto para el día actual, días pasados (siempre cerrados) y
-    turnos nocturnos (la fecha de cierre real puede ser el día
-    siguiente al de la fila procesada).
+    - Para ausencia total (cero marcaciones): la ventana cierra cuando
+      `datetime.now() >= entrada_programada + limite_retardo_mayor_segundos`.
+      Una vez que la última entrada posible según la política ha pasado,
+      la ausencia es definitiva — no hace falta esperar salida_programada.
+      Si entrada_programada no se provee, se conserva el comportamiento
+      anterior: esperar salida_programada.
+
+    - Para OMISION_SALIDA (tiene entrada, falta salida): la ventana sigue
+      siendo salida_programada, sin cambio.
+
+    fecha se conserva por compatibilidad de firma pero no participa en
+    la decisión.
     """
-    jornada_abierta = (
-        salida_programada is not None and datetime.now() < salida_programada
+    ahora = datetime.now()
+
+    # Ventana de entrada cerrada: una vez que entrada + retardo_mayor pasó,
+    # quien no llegó ya no puede llegar "a tiempo" bajo ningún criterio
+    # de la política → ausencia definitiva.
+    if entrada_programada is not None:
+        limite_retardo_mayor = int(politica.get("limite_retardo_mayor_segundos", 0))
+        ventana_entrada_abierta = ahora < entrada_programada + timedelta(
+            seconds=limite_retardo_mayor
+        )
+    else:
+        ventana_entrada_abierta = (
+            salida_programada is not None and ahora < salida_programada
+        )
+
+    # Ventana de salida: para OMISION_SALIDA sigue siendo salida_programada.
+    ventana_salida_abierta = (
+        salida_programada is not None and ahora < salida_programada
     )
 
     if not tiene_entrada and not tiene_salida:
-        # Ausencia total (cero marcaciones). Mientras la jornada siga
-        # abierta no se genera FALTA todavía (Contrato §15).
-        if jornada_abierta:
-            return None  # No procesar: turno aún no termina
-
+        if ventana_entrada_abierta:
+            return None  # Puede llegar todavía dentro de la ventana de entrada.
         return (
             "FALTA",
             0,
@@ -157,9 +171,6 @@ def _calcular_estatus_y_puntos(
         )
 
     if not tiene_entrada and tiene_salida:
-        # Contrato §7: existe salida pero no entrada → OMISION_ENTRADA.
-        # La salida ya es un evento marcado (pasado), por lo que el
-        # resultado es definitivo independientemente de la hora actual.
         return (
             "OMISION_ENTRADA",
             0,
@@ -178,17 +189,13 @@ def _calcular_estatus_y_puntos(
         )
 
     if not tiene_salida:
-        # Mientras la jornada siga abierta, procesar con el estatus de
-        # entrada (puntual/tolerancia/retardo) pero sin cerrar como
-        # OMISION_SALIDA (Contrato §15).
-        if jornada_abierta:
+        if ventana_salida_abierta:
             return (
                 estatus_entrada,
                 puntos_entrada,
                 False,
                 f"{_OBSERVACIONES_ENTRADA[estatus_entrada]} Turno en curso.",
             )
-
         return (
             "OMISION_SALIDA",
             0,
@@ -203,71 +210,140 @@ def _calcular_estatus_y_puntos(
         _OBSERVACIONES_ENTRADA[estatus_entrada],
     )
 
+def _construir_sesiones(
+    marcaciones_raw: list | str | None,
+    total_marcaciones: int,
+) -> dict[str, Any]:
+    """
+    Contrato §11: empareja marcaciones cronológicamente en sesiones posicionales.
+
+    Sesión 1 (par 1,2) = jornada regular.
+    Sesión 2 (par 3,4) = tiempo extra.
+    Máximo 4 marcaciones procesadas; si hay más se activa exceso_marcaciones.
+    Si el total es impar, la última sesión queda sin salida.
+    """
+    if marcaciones_raw is None:
+        raw = []
+    elif isinstance(marcaciones_raw, list):
+        raw = marcaciones_raw
+    elif isinstance(marcaciones_raw, str):
+        try:
+            raw = json.loads(marcaciones_raw)
+        except (json.JSONDecodeError, TypeError):
+            raw = []
+    else:
+        raw = []
+
+    timestamps: list[datetime] = []
+    for m in raw:
+        if m is None:
+            continue
+        if isinstance(m, datetime):
+            timestamps.append(m.replace(tzinfo=None))
+        elif isinstance(m, str):
+            try:
+                normalized = m.replace(" ", "T")
+                timestamps.append(datetime.fromisoformat(normalized[:19]))
+            except ValueError:
+                pass
+
+    timestamps.sort()
+    exceso = len(timestamps) > 4
+    timestamps = timestamps[:4]
+
+    n = len(timestamps)
+
+    if n == 0:
+        sesion_regular: tuple[datetime | None, datetime | None] = (None, None)
+        sesion_ot: tuple[datetime | None, datetime | None] | None = None
+    elif n == 1:
+        sesion_regular = (timestamps[0], None)
+        sesion_ot = None
+    elif n == 2:
+        sesion_regular = (timestamps[0], timestamps[1])
+        sesion_ot = None
+    elif n == 3:
+        sesion_regular = (timestamps[0], timestamps[1])
+        sesion_ot = (timestamps[2], None)
+    else:
+        sesion_regular = (timestamps[0], timestamps[1])
+        sesion_ot = (timestamps[2], timestamps[3])
+
+    return {
+        "sesion_regular": sesion_regular,
+        "sesion_ot": sesion_ot,
+        "exceso_marcaciones": exceso,
+        "total_marcaciones": total_marcaciones,
+    }
+
+
 def _calcular_minutos_extra(
     modalidad_tiempo_extra: str,
     entrada_programada: datetime,
     salida_programada: datetime,
-    primera_entrada: datetime | None,
-    ultima_salida: datetime | None,
+    sesion_regular: tuple[datetime | None, datetime | None],
+    sesion_ot: tuple[datetime | None, datetime | None] | None,
     permite_tiempo_extra: bool,
     margen_tiempo_extra_segundos: int,
 ) -> int:
     """
-    Contrato §19: el margen es una franja de gracia que nunca se paga.
-    Solo el excedente que supera el margen cuenta como tiempo extra.
+    Contrato §19 (enmendado): modelo de sesiones.
+
+    DESPUES_SALIDA: la Sesión 2 debe iniciar después de
+    salida_programada + margen para ser válida. Si lo es, el tiempo extra
+    es la duración real de esa sesión (no se resta el margen de la duración).
+
+    ANTES_ENTRADA: el tiempo extra sigue siendo el excedente de la
+    llegada anticipada respecto a entrada_programada, menos el margen.
     """
     if not permite_tiempo_extra:
         return 0
 
     margen = max(0, int(margen_tiempo_extra_segundos or 0))
     modalidad = str(modalidad_tiempo_extra or "").upper()
+    primera_entrada = sesion_regular[0]
 
     if modalidad == "ANTES_ENTRADA" and primera_entrada:
         diff_seconds = (
             entrada_programada.replace(tzinfo=None)
             - primera_entrada.replace(tzinfo=None)
         ).total_seconds()
+        return int(max(0, diff_seconds - margen) // 60)
 
-        excedente_segundos = max(0, diff_seconds - margen)
-        return int(excedente_segundos // 60)
-
-    if modalidad == "DESPUES_SALIDA" and ultima_salida:
-        diff_seconds = (
-            ultima_salida.replace(tzinfo=None)
-            - salida_programada.replace(tzinfo=None)
+    if modalidad == "DESPUES_SALIDA" and sesion_ot is not None:
+        ot_entrada, ot_salida = sesion_ot
+        if ot_entrada is None or ot_salida is None:
+            return 0
+        inicio_valido = salida_programada.replace(tzinfo=None) + timedelta(seconds=margen)
+        if ot_entrada.replace(tzinfo=None) < inicio_valido:
+            return 0
+        ot_segundos = (
+            ot_salida.replace(tzinfo=None) - ot_entrada.replace(tzinfo=None)
         ).total_seconds()
-
-        excedente_segundos = max(0, diff_seconds - margen)
-        return int(excedente_segundos // 60)
+        return max(0, int(ot_segundos // 60))
 
     return 0
 
 
 def _calcular_minutos_ordinarios(
-    primera_entrada: datetime | None,
-    ultima_salida: datetime | None,
+    sesion_regular: tuple[datetime | None, datetime | None],
     duracion_jornada_minutos: int,
     descanso_minutos: int,
-    minutos_extra: int,
 ) -> int:
-    if primera_entrada is None or ultima_salida is None:
+    """
+    Contrato §11: minutos ordinarios = duración real de la Sesión 1,
+    menos descanso fijo del horario, capped a duracion_jornada_minutos.
+    """
+    entrada, salida = sesion_regular
+    if entrada is None or salida is None:
         return 0
 
     diff_seconds = (
-        ultima_salida.replace(tzinfo=None)
-        - primera_entrada.replace(tzinfo=None)
+        salida.replace(tzinfo=None) - entrada.replace(tzinfo=None)
     ).total_seconds()
 
-    minutos_trabajados = max(0, int(diff_seconds // 60))
-    minutos_netos = max(
-        0,
-        minutos_trabajados - int(descanso_minutos or 0) - minutos_extra,
-    )
-
-    return min(
-        int(duracion_jornada_minutos or 0),
-        minutos_netos,
-    )
+    minutos_netos = max(0, int(diff_seconds // 60) - int(descanso_minutos or 0))
+    return min(int(duracion_jornada_minutos or 0), minutos_netos)
 
 
 def _registrar_dia_no_laboral(
@@ -567,89 +643,28 @@ def procesar_asistencia_diaria(
                 u.cruza_medianoche,
                 u.asignaciones_vigentes,
 
-                marcas.primera_entrada,
-                marcas.ultima_salida
+                marcas.marcaciones_json,
+                marcas.total_marcaciones
 
             FROM universo u
 
-            -- ¿El reloj mandó al menos una marcación de SALIDA real
-            -- (punch=1) dentro de la ventana de esta jornada? Si sí, se
-            -- confía en esa clasificación del dispositivo (compatibilidad
-            -- con el comportamiento de siempre). Si no —reloj que manda
-            -- todo con el mismo punch, caso real detectado desde
-            -- 2026-08-21 por mala configuración del dispositivo físico—
-            -- se clasifica por orden cronológico en vez de por el código
-            -- reportado (Contrato §11: el punch es un detalle de
-            -- adaptador/mapeo ZKTeco, no del núcleo; el motor puede
-            -- trabajar con marcaciones clasificadas independientemente
-            -- del protocolo de origen).
-            CROSS JOIN LATERAL (
-                SELECT EXISTS (
-                    SELECT 1
-                    FROM asistencia.marcaciones_crudas ms
-                    WHERE ms.empleado_id = u.empleado_id
-                      AND ms.punch = 1
-                      AND (
-                          (NOT u.cruza_medianoche AND ms.fecha = u.fecha)
-                          OR (u.cruza_medianoche AND ms.fecha IN (u.fecha, u.fecha + 1))
-                      )
-                ) AS existe
-            ) hay_salida_marcada
-
+            -- Contrato §11: todas las marcaciones del día ordenadas
+            -- cronológicamente. El emparejamiento posicional (sesiones)
+            -- se realiza en Python con _construir_sesiones(). No se
+            -- depende de códigos de punch para clasificar entrada/salida.
             CROSS JOIN LATERAL (
                 SELECT
-                    CASE
-                        WHEN hay_salida_marcada.existe THEN (
-                            -- Por dispositivo: primera marcación de ENTRADA (punch=0).
-                            SELECT MIN(m.fecha_hora)
-                            FROM asistencia.marcaciones_crudas m
-                            WHERE m.empleado_id = u.empleado_id
-                              AND m.fecha = u.fecha
-                              AND m.punch = 0
-                        )
-                        ELSE (
-                            -- Por orden: primera marcación del día, sin importar punch.
-                            SELECT MIN(m.fecha_hora)
-                            FROM asistencia.marcaciones_crudas m
-                            WHERE m.empleado_id = u.empleado_id
-                              AND m.fecha = u.fecha
-                        )
-                    END AS primera_entrada,
-
-                    CASE
-                        WHEN hay_salida_marcada.existe THEN (
-                            -- Por dispositivo: última marcación de SALIDA (punch=1).
-                            SELECT MAX(m.fecha_hora)
-                            FROM asistencia.marcaciones_crudas m
-                            WHERE m.empleado_id = u.empleado_id
-                              AND m.punch = 1
-                              AND (
-                                  (NOT u.cruza_medianoche AND m.fecha = u.fecha)
-                                  OR (u.cruza_medianoche AND m.fecha IN (u.fecha, u.fecha + 1))
-                              )
-                        )
-                        ELSE (
-                            -- Por orden: última marcación de la ventana, siempre que
-                            -- sea POSTERIOR a la entrada. Si solo hay una marcación en
-                            -- el día, no cuenta como salida de sí misma -> NULL.
-                            SELECT MAX(m.fecha_hora)
-                            FROM asistencia.marcaciones_crudas m
-                            WHERE m.empleado_id = u.empleado_id
-                              AND (
-                                  (NOT u.cruza_medianoche AND m.fecha = u.fecha)
-                                  OR (u.cruza_medianoche AND m.fecha IN (u.fecha, u.fecha + 1))
-                              )
-                              AND m.fecha_hora > COALESCE(
-                                  (
-                                      SELECT MIN(m2.fecha_hora)
-                                      FROM asistencia.marcaciones_crudas m2
-                                      WHERE m2.empleado_id = u.empleado_id
-                                        AND m2.fecha = u.fecha
-                                  ),
-                                  '-infinity'::timestamp
-                              )
-                        )
-                    END AS ultima_salida
+                    COALESCE(
+                        json_agg(m.fecha_hora ORDER BY m.fecha_hora ASC),
+                        '[]'::json
+                    ) AS marcaciones_json,
+                    COUNT(*) AS total_marcaciones
+                FROM asistencia.marcaciones_crudas m
+                WHERE m.empleado_id = u.empleado_id
+                  AND (
+                      (NOT u.cruza_medianoche AND m.fecha = u.fecha)
+                      OR (u.cruza_medianoche AND m.fecha IN (u.fecha, u.fecha + 1))
+                  )
             ) marcas
 
             ORDER BY u.fecha, u.empleado_id
@@ -766,6 +781,28 @@ def procesar_asistencia_diaria(
                 politica = resolucion_politica.politica
 
                 # ============================================================
+                # Contrato §11: construir sesiones posicionales a partir
+                # de todas las marcaciones del día, ordenadas por tiempo.
+                # Se hace antes del check de calendario para que
+                # primera_entrada/ultima_salida estén disponibles incluso
+                # en días no laborables (para auditoría).
+                # ============================================================
+                sesiones = _construir_sesiones(
+                    row["marcaciones_json"],
+                    int(row["total_marcaciones"]),
+                )
+                sesion_regular = sesiones["sesion_regular"]
+                sesion_ot = sesiones["sesion_ot"]
+                exceso_marcaciones = sesiones["exceso_marcaciones"]
+
+                primera_entrada = sesion_regular[0]
+                salida_regular = sesion_regular[1]
+                ultima_salida = (
+                    sesion_ot[1] if sesion_ot and sesion_ot[1] is not None
+                    else salida_regular
+                )
+
+                # ============================================================
                 # PASO PREVIO: Verificar si la fecha es laborable
                 # según el Calendario Laboral.
                 #
@@ -787,13 +824,19 @@ def procesar_asistencia_diaria(
                         fecha=fecha,
                         hora_entrada=row["hora_entrada"],
                         hora_salida=row["hora_salida"],
-                        primera_entrada=row["primera_entrada"],
-                        ultima_salida=row["ultima_salida"],
+                        primera_entrada=primera_entrada,
+                        ultima_salida=ultima_salida,
                         eventos=resolucion.eventos,
                     )
                     dias_no_laborables_fecha += 1
                     procesadas_fecha += 1
                     continue
+
+                omision_salida_ot = (
+                    sesion_ot is not None
+                    and sesion_ot[0] is not None
+                    and sesion_ot[1] is None
+                )
 
                 # ============================================================
                 # Procesamiento normal de asistencia (día laborable)
@@ -810,9 +853,6 @@ def procesar_asistencia_diaria(
                     row["hora_salida"],
                 )
 
-                primera_entrada = row["primera_entrada"]
-                ultima_salida = row["ultima_salida"]
-
                 minutos_retardo = _calcular_minutos_retardo(
                     entrada_programada=entrada_programada,
                     primera_entrada=primera_entrada,
@@ -826,10 +866,11 @@ def procesar_asistencia_diaria(
                 resultado_estatus = _calcular_estatus_y_puntos(
                     segundos_retardo=segundos_retardo,
                     tiene_entrada=primera_entrada is not None,
-                    tiene_salida=ultima_salida is not None,
+                    tiene_salida=salida_regular is not None,
                     politica=politica,
                     fecha=fecha,
                     salida_programada=salida_programada,
+                    entrada_programada=entrada_programada,
                 )
 
                 # Si retorna None, el turno aún no termina — saltar sin grabar
@@ -838,12 +879,23 @@ def procesar_asistencia_diaria(
 
                 estatus, puntos, requiere_revision, observaciones = resultado_estatus
 
+                if exceso_marcaciones:
+                    requiere_revision = True
+                    extra = sesiones["total_marcaciones"] - 4
+                    observaciones += (
+                        f" Se detectaron {sesiones['total_marcaciones']} marcaciones"
+                        f" ({extra} ignoradas; máximo 4 por día)."
+                    )
+                if omision_salida_ot:
+                    requiere_revision = True
+                    observaciones += " Sesión de tiempo extra sin checada de salida."
+
                 minutos_extra = _calcular_minutos_extra(
                     modalidad_tiempo_extra=row["modalidad_tiempo_extra"],
                     entrada_programada=entrada_programada,
                     salida_programada=salida_programada,
-                    primera_entrada=primera_entrada,
-                    ultima_salida=ultima_salida,
+                    sesion_regular=sesion_regular,
+                    sesion_ot=sesion_ot,
                     permite_tiempo_extra=row["permite_tiempo_extra"],
                     margen_tiempo_extra_segundos=politica[
                         "margen_tiempo_extra_segundos"
@@ -851,11 +903,9 @@ def procesar_asistencia_diaria(
                 )
 
                 minutos_ordinarios = _calcular_minutos_ordinarios(
-                    primera_entrada=primera_entrada,
-                    ultima_salida=ultima_salida,
+                    sesion_regular=sesion_regular,
                     duracion_jornada_minutos=row["duracion_jornada_minutos"],
                     descanso_minutos=row["descanso_minutos"],
-                    minutos_extra=minutos_extra,
                 )
 
                 db.execute(

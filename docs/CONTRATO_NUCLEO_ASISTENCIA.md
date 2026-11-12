@@ -218,16 +218,40 @@ dispositivos.empleado_dispositivo.zk_user_id
 
 ---
 
-## 11. Múltiples marcaciones
+## 11. Múltiples marcaciones — modelo de sesiones
 
-El motor debe manejar múltiples checadas de forma determinista.
+El motor debe manejar múltiples checadas de forma determinista mediante **emparejamiento posicional cronológico**.
 
-Como mínimo:
+**Regla de emparejamiento:**
 
-- Primera marcación clasificada como entrada (`MIN(fecha_hora)` del día entre marcaciones de entrada).
-- Última marcación clasificada como salida (`MAX(fecha_hora)` del día o día siguiente si cruza medianoche, entre marcaciones de salida).
+Todas las marcaciones del día se ordenan por `fecha_hora ASC` y se emparejan posicionalmente:
 
-Los códigos numéricos de punch (`0`, `1`, etc.) son detalles del adaptador/mapeo ZKTeco y no forman parte de este contrato del núcleo. El motor trabaja con marcaciones ya clasificadas como "entrada" o "salida" independientemente del protocolo de origen.
+```
+Marca 1 (posición impar)  → entrada  ┐ Sesión 1 — jornada regular
+Marca 2 (posición par)    → salida   ┘
+Marca 3 (posición impar)  → entrada  ┐ Sesión 2 — tiempo extra
+Marca 4 (posición par)    → salida   ┘
+```
+
+**Límite de sesiones:**
+
+El motor procesa un máximo de **dos sesiones** (cuatro marcaciones) por día.
+
+- Si el empleado tiene **más de 4 marcaciones**, se procesan solo las primeras 4 y se fuerza `requiere_revision = TRUE` con una observación que indica cuántas marcas se ignoraron.
+- Si el total de marcaciones es impar, la última sesión queda sin salida → `OMISION_SALIDA` sobre ese segmento.
+
+**Sesión regular vs. sesión de tiempo extra (DESPUES_SALIDA):**
+
+- **Sesión 1** es siempre la jornada regular. Se clasifica contra el horario programado (retardo, omisiones, etc.).
+- **Sesión 2** es tiempo extra si su entrada ocurre después de `salida_programada + margen_tiempo_extra_segundos`. Si la entrada de la sesión 2 ocurre antes de ese umbral, no se reconoce como tiempo extra válido.
+
+**Sesión de tiempo extra (ANTES_ENTRADA):**
+
+Para turnos `ANTES_ENTRADA`, el tiempo extra está integrado en la misma Sesión 1 (el empleado llega antes de la entrada programada y no hay segunda sesión). La lógica existente de `entrada_programada - primera_entrada - margen` sigue aplicando.
+
+**Códigos de punch:**
+
+Los códigos numéricos de punch (`0`, `1`, etc.) son detalles del adaptador ZKTeco y no forman parte de este contrato. El motor construye sesiones por orden cronológico, independientemente del código reportado por el dispositivo.
 
 Las marcaciones duplicadas no deben generar más de una asistencia diaria por (empleado, fecha).
 
@@ -274,23 +298,30 @@ No se impone que todo un rango extenso sea una única transacción atómica, per
 
 Queda **prohibido** generar resultados definitivos que dependan de marcaciones futuras mientras la jornada siga abierta.
 
-**Reglas específicas:**
+**Dos ventanas de cierre independientes:**
 
-- `FALTA` por ausencia total: no debe generarse para el día en curso si la hora de salida programada del empleado aún no ha pasado. El empleado puede no haber llegado todavía.
-- `OMISION_SALIDA`: no debe generarse mientras el turno del empleado siga dentro de su ventana válida de salida. Un empleado cuyo turno termina a las 16:00 no puede marcarse como omisión de salida a las 14:00.
-- El motor debe considerar el **momento actual** respecto al horario efectivo de la jornada al determinar si un resultado es definitivo o prematuro.
-- No se puede generar `OMISION_SALIDA` mientras todavía sea razonablemente posible registrar la salida dentro de la jornada que se está evaluando.
+**Para `FALTA` por ausencia total (cero marcaciones):**
+
+La ventana cierra cuando:
+
+```
+datetime.now() >= entrada_programada + limite_retardo_mayor_segundos
+```
+
+Una vez que la última entrada posible según la política ha pasado, la ausencia es definitiva. No es necesario esperar `salida_programada`. El empleado que no ha llegado después de que incluso el retardo_mayor cerró, ya no puede llegar "a tiempo" bajo ningún criterio de la política.
+
+La fuente de `limite_retardo_mayor_segundos` es `asistencia.politicas_asistencia` — no se hardcodea.
+
+**Para `OMISION_SALIDA` (tiene entrada, falta salida):**
+
+La ventana sigue siendo `salida_programada`. Un empleado cuyo turno termina a las 16:00 no puede marcarse como omisión de salida a las 14:00.
+
+**Reglas generales:**
+
 - No se puede cerrar anticipadamente una jornada usando valores hardcodeados.
 - Si la jornada aún está abierta y no es posible clasificar definitivamente, el registro **no debe crearse** o debe marcarse con un estatus provisional que no genere puntos ni penalizaciones.
 - Al reprocesar después de que la jornada cierre, el motor debe poder generar el resultado definitivo correcto.
-
-**Criterio de cierre de jornada:**
-
-El criterio exacto de cuándo una jornada se considera cerrada para evaluación definitiva deberá definirse durante la implementación mediante reglas existentes y tests.
-
-- No crear campos, tablas ni constantes nuevas para un margen de cierre.
-- Si posteriormente se determina que hace falta un margen adicional configurable, deberá identificarse primero una fuente de configuración existente (por ejemplo, un campo en `politicas_asistencia` o en `horarios`) o aprobarse explícitamente una modificación al contrato.
-- No inventar nuevas configuraciones sin justificación.
+- Para turnos nocturnos, `salida_programada` puede caer en el día siguiente al de la fila procesada.
 
 ---
 
@@ -358,18 +389,25 @@ Queda prohibido hardcodear este valor en el motor (Contrato §5/§17).
 El motor debe resolver la política vigente para la fecha procesada,
 igual que los demás límites de la política.
 
-**Regla de cálculo:**
+**Regla de cálculo — modelo de sesiones:**
 
-El margen nunca se paga. Solo el excedente que supera el margen se
-reconoce como tiempo extra:
+Para `DESPUES_SALIDA`: el tiempo extra es la **duración real de la Sesión 2** (§11), siempre que su entrada ocurra después de `salida_programada + margen`. El margen actúa como umbral de validez, no como deducción sobre la duración:
 
 ```
-minutos_extra = max(0, excedente_total_segundos - margen_tiempo_extra_segundos) / 60
+# Si sesion_2.entrada >= salida_programada + margen:
+minutos_extra = (sesion_2.salida - sesion_2.entrada) / 60
+
+# Si sesion_2.entrada < salida_programada + margen, o no hay sesion_2:
+minutos_extra = 0
 ```
 
-Ejemplo: turno matutino (`DESPUES_SALIDA`) sale 45 minutos después de
-su `salida_programada`, con `margen_tiempo_extra_segundos` = 1800
-(30 min) → `minutos_extra = 15`, no 45.
+Para `ANTES_ENTRADA`: el tiempo extra sigue siendo el excedente anterior a la entrada programada menos el margen:
+
+```
+minutos_extra = max(0, entrada_programada - primera_entrada - margen) / 60
+```
+
+Ejemplo `DESPUES_SALIDA`: turno 8–14, margen 30 min. El empleado checa salida a las 14:00, regresa a las 14:35 (Sesión 2), sale a las 17:00. `minutos_extra = 17:00 − 14:35 = 145 min`. El gap 14:00–14:35 no cuenta como trabajo ni se cobra.
 
 Este margen es independiente de `limite_tolerancia_segundos` (que
 clasifica retardos de entrada) y no debe confundirse con él.
